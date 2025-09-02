@@ -13,9 +13,18 @@ This build removes the L2CAP FCR native hook and Magisk/Xposed artifacts so the 
 - BLE GATT for discovery/control.
 - Optionally add BLE L2CAP CoC for API 29+ (client/server) with GATT fallback.
 
-## Build
-Open `android/` in Android Studio and build the `app` module as usual.
+Build & behavior
 
+Open android/ in Android Studio → build/run app.
+
+On Android 10+:
+
+If your pods (or your accessory firmware) expose a PSM characteristic at 0000FF01-0000-1000-8000-00805F9B34FB, the app will try L2CAP CoC.
+
+If not, or if connect fails, it falls back to GATT seamlessly.
+
+
+Toggle is ON by default; users can switch it off anytime in App Settings.
 
 ## Optional: High-throughput BLE L2CAP CoC (API 29+)
 - Added `com.yourco.airpods.L2capCocManager` and integrated into `BleClient`.

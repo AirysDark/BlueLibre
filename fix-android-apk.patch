@@ -1,0 +1,135 @@
+diff --git a/android/app/build.gradle b/android/app/build.gradle
+index 1111111..2222222 100644
+--- a/android/app/build.gradle
++++ b/android/app/build.gradle
+@@ -1,6 +1,6 @@
+ plugins {
+     alias(libs.plugins.android.application)
+     alias(libs.plugins.kotlin.android)
+     alias(libs.plugins.kotlin.compose)
+     id("kotlin-parcelize")
+ }
+@@ -8,7 +8,7 @@ android {
+-    namespace = "com.yourco.airpods"
++    namespace = "me.kavishdevar.librepods"
+     compileSdk = 35
+ 
+     defaultConfig {
+-        applicationId = "com.yourco.airpods"
++        applicationId = "me.kavishdevar.librepods"
+         minSdk = 28
+         targetSdk = 35
+         versionCode = 7
+         versionName = "0.1.0-rc.4"
+     }
+@@ -24,17 +24,31 @@ android {
+         }
+     }
+-    compileOptions {
+-        sourceCompatibility = JavaVersion.VERSION_1_8
+-        targetCompatibility = JavaVersion.VERSION_1_8
+-    }
+-    kotlinOptions {
+-        jvmTarget = "1.8"
+-    }
++    // Align toolchains to Java 17 (AGP 8.x requirement on modern images)
++    compileOptions {
++        sourceCompatibility = JavaVersion.VERSION_17
++        targetCompatibility = JavaVersion.VERSION_17
++    }
++    kotlinOptions {
++        jvmTarget = "17"
++    }
+     buildFeatures {
+         compose = true
+         viewBinding = true
+     }
++    // Keep compose compiler explicit to avoid mismatches on CI
++    composeOptions {
++        kotlinCompilerExtensionVersion = "1.5.14"
++    }
+     externalNativeBuild {
+         cmake {
+             path = file("src/main/cpp/CMakeLists.txt")
+             version = "3.22.1"
+         }
+     }
++    // Avoid META-INF collisions from transitive deps
++    packaging {
++        resources {
++            excludes += "META-INF/*.kotlin_module"
++        }
++    }
+ }
+ 
+ dependencies {
+@@ -56,4 +70,4 @@ dependencies {
+     implementation(libs.haze.materials)
+     implementation(libs.androidx.dynamicanimation)
+     compileOnly(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+ }
+diff --git a/android/app/src/main/AndroidManifest.xml b/android/app/src/main/AndroidManifest.xml
+index 3333333..4444444 100644
+--- a/android/app/src/main/AndroidManifest.xml
++++ b/android/app/src/main/AndroidManifest.xml
+@@ -1,21 +1,21 @@
+-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+-    package="com.yourco.airpods">
++<manifest xmlns:android="http://schemas.android.com/apk/res/android"
++    package="me.kavishdevar.librepods">
+ 
+     <application
+         android:allowBackup="true"
+         android:icon="@mipmap/ic_launcher"
+         android:label="@string/app_name"
+         android:roundIcon="@mipmap/ic_launcher_round"
+         android:supportsRtl="true"
+         android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+         <activity
+-            android:name="com.yourco.airpods.MainActivity"
++            android:name=".MainActivity"
+             android:exported="true">
+             <intent-filter>
+                 <action android:name="android.intent.action.MAIN" />
+                 <category android:name="android.intent.category.LAUNCHER"/>
+             </intent-filter>
+         </activity>
+     </application>
+ 
+ </manifest>
+diff --git a/android/app/src/main/java/me/kavishdevar/librepods/MainActivity.kt b/android/app/src/main/java/me/kavishdevar/librepods/MainActivity.kt
+new file mode 100644
+index 0000000..5555555
+--- /dev/null
++++ b/android/app/src/main/java/me/kavishdevar/librepods/MainActivity.kt
+@@ -0,0 +1,35 @@
++package me.kavishdevar.librepods
++
++import android.os.Bundle
++import androidx.activity.ComponentActivity
++import androidx.activity.compose.setContent
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.tooling.preview.Preview
++
++class MainActivity : ComponentActivity() {
++    override fun onCreate(savedInstanceState: Bundle?) {
++        super.onCreate(savedInstanceState)
++        setContent { App() }
++    }
++}
++
++@Composable
++fun App() {
++    MaterialTheme {
++        Text("LibrePods")
++    }
++}
++
++@Preview
++@Composable
++fun PreviewApp() {
++    App()
++}

@@ -1,0 +1,13 @@
+sudo apt update
+sudo apt install -y build-essential cmake ninja-build pkg-config libdbus-1-dev libbluetooth-dev
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+sudo cmake --install build --prefix /usr/local
+
+
+
+---
+
+✅ With these files in place, you can build on **Windows** or **Linux**, and your app will show **all current AirPods models** correctly and gracefully handle future ones.
+
+Do you want me to also draft a **main.cpp sample** that shows how to call `ble_read_characteristic` + `ModelName` together (to test end-to-end)?

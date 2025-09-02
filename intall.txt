@@ -1,0 +1,15 @@
+Windows (VS2022):
+
+git clone https://github.com/microsoft/vcpkg .vcpkg
+.\.vcpkg\bootstrap-vcpkg.bat
+cmake --preset win64-release
+cmake --build --preset win64-release-build --parallel
+cmake --install build --prefix build\out
+
+Linux:
+
+sudo apt update
+sudo apt install -y build-essential cmake ninja-build pkg-config libdbus-1-dev libbluetooth-dev
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+sudo cmake --install build --prefix /usr/local

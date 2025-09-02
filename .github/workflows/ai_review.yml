@@ -5,7 +5,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Run Champ AI Code Review
-        uses: your-username/ai-code-review-action@v1
+        uses: AirysDark/BlueLibre
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          google_api_key: ${{ secrets.GOOGLE_API_KEY }}
+          github_token: ${{ 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 }}
+          google_api_key: ${{ AIzaSyCwNE8Yj0KlExw26DTGuyxR8lRo4oz3Pj8 }}

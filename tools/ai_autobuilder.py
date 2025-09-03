@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 import os, sys, subprocess, json, tempfile, re, pathlib, requests
 
-PROVIDER = os.getenv("PROVIDER", "openai")  # default to OpenAI
+# -------- Config (env-overridable) --------
+PROVIDER = os.getenv("PROVIDER", "openai")              # "openai" or "llama"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-# Fallback settings
 FALLBACK_PROVIDER = os.getenv("FALLBACK_PROVIDER", "llama")
 LLAMA_CPP_BIN = os.getenv("LLAMA_CPP_BIN", "llama-cli")
-LLAMA_MODEL_PATH = os.getenv("MODEL_PATH", "models/Meta-Llama-3-8B-Instruct.Q4_K_M.gguf")
+LLAMA_MODEL_PATH = os.getenv("MODEL_PATH", "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
+
+# prompt / context controls for llama.cpp
+LLAMA_CTX = int(os.getenv("LLAMA_CTX", "4096"))         # llama context tokens
+MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "3600"))  # keep headroom for output
+AI_LOG_TAIL = int(os.getenv("AI_LOG_TAIL", "200"))      # lines of build.log to include
+
+MAX_FILES_IN_TREE = int(os.getenv("MAX_FILES_IN_TREE", "160"))
+RECENT_DIFF_MAX_CHARS = int(os.getenv("RECENT_DIFF_MAX_CHARS", "6000"))
 
 MAX_ATTEMPTS = int(os.getenv("AI_BUILDER_ATTEMPTS", "3"))
 BUILD_CMD = os.getenv("BUILD_CMD", "./gradlew assembleDebug --stacktrace")
@@ -19,13 +27,13 @@ Goal: Fix build/test failures by editing files minimally.
 Repository file list (truncated):
 {repo_tree}
 
-Recent changes (last few commits diff):
+Recent changes (last few commits diff, truncated):
 {recent_diff}
 
 Build command:
 {build_cmd}
 
-Build log tail (last 400 lines):
+Build log tail (last {ai_log_tail} lines):
 {build_tail}
 
 Constraints:
@@ -38,6 +46,7 @@ Constraints:
 Now output the unified diff to fix the error.
 """
 
+# -------- helpers --------
 def run(cmd, cwd=PROJECT_ROOT, capture=False, check=False):
     if capture:
         return subprocess.run(cmd, cwd=cwd, shell=True, text=True,
@@ -48,24 +57,38 @@ def run(cmd, cwd=PROJECT_ROOT, capture=False, check=False):
 def git(*args, capture=False):
     return run("git " + " ".join(args), capture=capture)
 
-def get_repo_tree():
+def get_repo_tree(max_files=MAX_FILES_IN_TREE):
     out = run("git ls-files || true", capture=True)
     files = out.stdout.strip().splitlines()
-    return "\n".join(files[:220])
+    return "\n".join(files[:max_files])
 
-def get_recent_diff():
+def get_recent_diff(max_chars=RECENT_DIFF_MAX_CHARS):
     out = run("git log --oneline -n 1 || true", capture=True)
     if out.stdout.strip() == "":
         return "(no recent commits)"
-    diff = run("git diff --unified=2 -M -C HEAD~5..HEAD || true", capture=True)
-    return diff.stdout[-8000:]
+    diff = run("git diff --unified=2 -M -C HEAD~5..HEAD || true", capture=True).stdout
+    return diff[-max_chars:]
 
-def tail_build_log(lines=400):
+def tail_build_log(lines=None):
+    if lines is None:
+        lines = AI_LOG_TAIL
     p = pathlib.Path("build.log")
     if not p.exists():
         return "(no build log)"
     data = p.read_text(errors="ignore").splitlines()
-    return "\n".join(data[-lines:])
+    return "\n".join(data[-int(lines):])
+
+def truncate_prompt(p: str, max_tokens=MAX_PROMPT_TOKENS):
+    """
+    Heuristic truncation by characters (~4 chars/token). Keeps head & tail.
+    """
+    char_limit = max_tokens * 4
+    if len(p) <= char_limit:
+        return p
+    head = p[: int(char_limit * 0.60)]
+    tail = p[- int(char_limit * 0.35):]
+    note = "\n\n[...prompt truncated to fit model context...]\n\n"
+    return head + note + tail
 
 def run_build():
     with open("build.log", "wb") as f:
@@ -76,8 +99,13 @@ def run_build():
             f.write(line)
     return p.wait()
 
+# -------- LLM calls --------
 def _call_openai(prompt):
-    key = os.environ["OPENAI_API_KEY"]
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        # keep the same shape used in earlier logs for fallback detection
+        raise RuntimeError('openai_error:{"error":{"message":"OPENAI_API_KEY missing"}}')
+
     url = "https://api.openai.com/v1/chat/completions"
     payload = {
         "model": OPENAI_MODEL,
@@ -107,12 +135,15 @@ def _call_llama(prompt):
     if not mp.exists():
         print(f"llama.cpp: MODEL_PATH not found: {mp}. Provide a GGUF model or set MODEL_PATH env.")
         raise RuntimeError("llama_failed")
+
+    safe_prompt = truncate_prompt(prompt)
     args = [
         LLAMA_CPP_BIN,
         "-m", str(mp),
-        "-p", prompt,
+        "-p", safe_prompt,
         "-n", "2048",
         "--temp", "0.2",
+        "-c", str(LLAMA_CTX),
     ]
     out = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if out.returncode != 0:
@@ -125,6 +156,7 @@ def call_llm(prompt):
         try:
             return _call_openai(prompt)
         except RuntimeError as e:
+            # explicit fallback on openai error (e.g., insufficient_quota)
             if "openai_error" in str(e) and FALLBACK_PROVIDER == "llama":
                 print("⚠️ OpenAI failed (quota or request). Falling back to llama.cpp…")
                 return _call_llama(prompt)
@@ -134,6 +166,7 @@ def call_llm(prompt):
     else:
         raise RuntimeError(f"Unknown PROVIDER={PROVIDER}")
 
+# -------- patching --------
 def extract_unified_diff(text):
     m = re.search(r'(?ms)^--- [^\n]+\n\+\+\+ [^\n]+\n', text)
     if not m:
@@ -158,8 +191,9 @@ def apply_patch(diff_text):
     finally:
         os.unlink(tmp.name)
 
+# -------- main --------
 def main():
-    print("== AI Autobuilder (OpenAI → llama fallback) ==")
+    print("== AI Autobuilder (multi-purpose; OpenAI → llama fallback) ==")
     print("Project:", PROJECT_ROOT)
     print(f"Provider: {PROVIDER}, Model: {OPENAI_MODEL}, Fallback: {FALLBACK_PROVIDER}")
     if not (PROJECT_ROOT / ".git").exists():
@@ -182,7 +216,8 @@ def main():
             repo_tree=get_repo_tree(),
             recent_diff=get_recent_diff(),
             build_cmd=BUILD_CMD,
-            build_tail=tail_build_log()
+            ai_log_tail=AI_LOG_TAIL,
+            build_tail=tail_build_log(AI_LOG_TAIL),
         )
         llm_out = call_llm(prompt)
         diff = extract_unified_diff(llm_out)

@@ -1,4 +1,4 @@
-# Bluelibre
+# Bluelibre.
 
 A cross-platform AirPods desktop & Android client.  
 Supports model detection and battery status display for **AirPods 1, 2, 3, 4, 4 ANC, Pro, Pro 2, and Max**.

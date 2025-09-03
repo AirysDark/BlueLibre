@@ -25,9 +25,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      # -------------------------
-      # ANDROID BUILD ENVIRONMENT
-      # -------------------------
+      - name: Install Python deps for autobuilder
+        run: pip install requests
+
+      # ---------- ANDROID ENV ----------
       - name: Set up JDK 17
         if: matrix.target == 'android'
         uses: actions/setup-java@v4
@@ -48,18 +49,18 @@ jobs:
         run: |
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      # -------------------------
-      # LINUX BUILD ENVIRONMENT
-      # -------------------------
+      - name: Make Gradle wrapper executable
+        if: matrix.target == 'android'
+        run: chmod +x ./gradlew
+
+      # ---------- LINUX ENV ----------
       - name: Install Linux build deps
         if: matrix.target == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake qtbase5-dev
 
-      # -------------------------
-      # RUN BUILD
-      # -------------------------
+      # ---------- BUILD ----------
       - name: First build (capture)
         id: build
         run: |
@@ -73,9 +74,7 @@ jobs:
           bash -lc "$BUILD_CMD" | tee build.log
         continue-on-error: true
 
-      # -------------------------
-      # AI AUTOBUILDER
-      # -------------------------
+      # ---------- AI AUTOFIX ----------
       - name: Attempt AI auto-fix with OpenAI
         if: steps.build.outcome != 'success'
         env:
@@ -87,9 +86,7 @@ jobs:
         run: |
           python3 tools/ai_autobuilder.py || true
 
-      # -------------------------
-      # COMMIT & PUSH FIXES
-      # -------------------------
+      # ---------- PUSH PATCH ----------
       - name: Push branch and open PR if changes
         if: steps.build.outcome != 'success'
         run: |

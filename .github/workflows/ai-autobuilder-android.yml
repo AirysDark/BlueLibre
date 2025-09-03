@@ -7,7 +7,7 @@ on:
 
 jobs:
   android:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write

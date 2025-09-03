@@ -1,4 +1,4 @@
-name: BlueLibre AI Autobuilder — Windows
+name: BlueLibre AI Autobuilder — Linux
 
 on:
   push:
@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  linux:
+    runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
@@ -22,18 +22,16 @@ jobs:
       - name: Install Python deps for autobuilder
         run: pip install requests
 
-      - name: Verify MSVC and CMake
-        shell: pwsh
+      - name: Install Linux build deps
         run: |
-          cmake --version
-          cl /?
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake qtbase5-dev
 
       - name: Build (capture)
         id: build
-        shell: bash
         run: |
           set -euxo pipefail
-          BUILD_CMD='cmake -S . -B build -G "Visual Studio 17 2022" -A x64 && cmake --build build --config Release -j'
+          BUILD_CMD="cmake -S . -B build && cmake --build build -j"
           echo "BUILD_CMD=$BUILD_CMD" >> $GITHUB_OUTPUT
           bash -lc "$BUILD_CMD" | tee build.log
         continue-on-error: true
@@ -46,27 +44,26 @@ jobs:
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1-mini' }}
           AI_BUILDER_ATTEMPTS: "2"
           BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}
-        run: python tools/ai_autobuilder.py || true
+        run: python3 tools/ai_autobuilder.py || true
 
       - name: Push branch with fixes (if any)
         if: steps.build.outcome != 'success'
-        shell: bash
         run: |
           set -eux
           if git diff --quiet HEAD; then exit 0; fi
-          BRANCH="fix/windows-ai-autobuilder-${{ github.run_id }}"
+          BRANCH="fix/linux-ai-autobuilder-${{ github.run_id }}"
           git config user.name "ai-autobuilder[bot]"
           git config user.email "ai-autobuilder@users.noreply.github.com"
           git switch -c "$BRANCH"
           git add -A
-          git commit -m "AI autobuilder: Windows fixes" || true
+          git commit -m "AI autobuilder: Linux fixes" || true
           git push --set-upstream origin "$BRANCH" || true
 
-      - name: Upload Windows build artifacts (optional)
+      - name: Upload Linux build artifacts (optional)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-build
+          name: linux-build
           path: |
             build/**
           if-no-files-found: ignore

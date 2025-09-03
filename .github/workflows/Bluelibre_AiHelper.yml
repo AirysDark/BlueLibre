@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Bluelibre_Aihelper
-        uses: AirysDark/Bluelibre_AiHelper@95a0a02e7a566ea85c2b8980285634d2bcb6997e
+        uses: AirysDark/Bluelibre_AiHelper@v1.0.1
         with:
           github_token: ${{ github.token }}
           google_api_key: ${{ secrets.GOOGLE_API_KEY }}

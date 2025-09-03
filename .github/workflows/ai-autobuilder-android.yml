@@ -1,4 +1,4 @@
-name: BlueLibre AI Autobuilder — Android (exit-code aware)
+name: BlueLibre AI Autobuilder — Android (robust)
 
 on:
   push:
@@ -40,6 +40,7 @@ jobs:
         run: |
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
+      # Provide system Gradle in case we don't have a wrapper
       - name: Set up Gradle (fallback)
         uses: gradle/gradle-build-action@v2
 
@@ -50,7 +51,7 @@ jobs:
         run: |
           set -euxo pipefail
 
-          # 1) Locate wrapper (handles android/gardle layout)
+          # 1) Locate wrapper (handles your android/gardle layout)
           CANDIDATES=("android/gardle/gradlew" "android/gradlew" "gradlew")
           WRAP=""
           for c in "${CANDIDATES[@]}"; do
@@ -76,7 +77,6 @@ jobs:
           EXIT=$?
           set -e
           echo "EXIT_CODE=$EXIT" >> "$GITHUB_OUTPUT"
-          # Make sure a log exists even if tee failed somehow
           [ -f build.log ] || echo "(no build output captured)" > build.log
 
           # Do not fail the step so the next steps can run
@@ -89,7 +89,7 @@ jobs:
         env:
           PROVIDER: openai
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1-mini' }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
           AI_BUILDER_ATTEMPTS: "2"
           BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}
         run: python3 tools/ai_autobuilder.py || true

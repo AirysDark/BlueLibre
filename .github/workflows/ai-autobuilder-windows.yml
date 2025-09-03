@@ -1,0 +1,72 @@
+name: BlueLibre AI Autobuilder — Windows
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Install Python deps for autobuilder
+        run: pip install requests
+
+      - name: Verify MSVC and CMake
+        shell: pwsh
+        run: |
+          cmake --version
+          cl /?
+
+      - name: Build (capture)
+        id: build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BUILD_CMD='cmake -S . -B build -G "Visual Studio 17 2022" -A x64 && cmake --build build --config Release -j'
+          echo "BUILD_CMD=$BUILD_CMD" >> $GITHUB_OUTPUT
+          bash -lc "$BUILD_CMD" | tee build.log
+        continue-on-error: true
+
+      - name: Attempt AI auto-fix with OpenAI
+        if: steps.build.outcome != 'success'
+        env:
+          PROVIDER: openai
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1-mini' }}
+          AI_BUILDER_ATTEMPTS: "2"
+          BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}
+        run: python tools/ai_autobuilder.py || true
+
+      - name: Push branch with fixes (if any)
+        if: steps.build.outcome != 'success'
+        shell: bash
+        run: |
+          set -eux
+          if git diff --quiet HEAD; then exit 0; fi
+          BRANCH="fix/windows-ai-autobuilder-${{ github.run_id }}"
+          git config user.name "ai-autobuilder[bot]"
+          git config user.email "ai-autobuilder@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add -A
+          git commit -m "AI autobuilder: Windows fixes" || true
+          git push --set-upstream origin "$BRANCH" || true
+
+      - name: Upload Windows build artifacts (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: |
+            build/**
+          if-no-files-found: ignore

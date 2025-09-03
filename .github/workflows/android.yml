@@ -54,5 +54,3 @@ jobs:
         with:
           name: build-trees
           path: android/app/build/outputs-zip/*.zip
-
-    

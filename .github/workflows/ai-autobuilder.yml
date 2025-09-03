@@ -1,4 +1,4 @@
-name: BlueLibre AI Autobuilder (Android + Linux)
+name: BlueLibre AI Autobuilder (Android + Linux + Windows)
 
 on:
   push:
@@ -7,10 +7,16 @@ on:
 
 jobs:
   build-and-fix:
-    runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: [android, linux]
+        include:
+          - target: android
+            os: ubuntu-latest
+          - target: linux
+            os: ubuntu-latest
+          - target: windows
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
       pull-requests: write
@@ -28,7 +34,7 @@ jobs:
       - name: Install Python deps for autobuilder
         run: pip install requests
 
-      # ---------- ANDROID ENV ----------
+      # ---------- ANDROID ENV (Ubuntu) ----------
       - name: Set up JDK 17
         if: matrix.target == 'android'
         uses: actions/setup-java@v4
@@ -53,22 +59,35 @@ jobs:
         if: matrix.target == 'android'
         run: chmod +x ./gradlew
 
-      # ---------- LINUX ENV ----------
+      # ---------- LINUX ENV (Ubuntu) ----------
       - name: Install Linux build deps
         if: matrix.target == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake qtbase5-dev
 
+      # ---------- WINDOWS ENV ----------
+      # Visual Studio 2022 is preinstalled on windows-latest
+      - name: Verify MSVC and CMake
+        if: matrix.target == 'windows'
+        shell: pwsh
+        run: |
+          cmake --version
+          cl /?
+
       # ---------- BUILD ----------
       - name: First build (capture)
         id: build
+        shell: bash
         run: |
           set -euxo pipefail
           if [ "${{ matrix.target }}" = "android" ]; then
             BUILD_CMD="./gradlew assembleDebug --stacktrace"
-          else
+          elif [ "${{ matrix.target }}" = "linux" ]; then
             BUILD_CMD="cmake -S . -B build && cmake --build build -j"
+          else
+            # Windows MSVC build (x64) using VS 2022 generator
+            BUILD_CMD='cmake -S . -B build -G "Visual Studio 17 2022" -A x64 && cmake --build build --config Release -j'
           fi
           echo "BUILD_CMD=$BUILD_CMD" >> $GITHUB_OUTPUT
           bash -lc "$BUILD_CMD" | tee build.log
@@ -84,11 +103,12 @@ jobs:
           AI_BUILDER_ATTEMPTS: "2"
           BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}
         run: |
-          python3 tools/ai_autobuilder.py || true
+          python tools/ai_autobuilder.py || true
 
       # ---------- PUSH PATCH ----------
       - name: Push branch and open PR if changes
         if: steps.build.outcome != 'success'
+        shell: bash
         run: |
           set -eux
           if git diff --quiet HEAD; then

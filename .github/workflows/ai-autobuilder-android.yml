@@ -14,10 +14,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+        with:
+          python-version: "3.11"
 
       - name: Install Python deps for autobuilder
         run: pip install requests
@@ -39,13 +41,13 @@ jobs:
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
+        run: chmod +x android/gradlew
 
       - name: Build (capture)
         id: build
         run: |
           set -euxo pipefail
-          BUILD_CMD="./gradlew assembleDebug --stacktrace"
+          BUILD_CMD="cd android && ./gradlew assembleDebug --stacktrace"
           echo "BUILD_CMD=$BUILD_CMD" >> $GITHUB_OUTPUT
           bash -lc "$BUILD_CMD" | tee build.log
         continue-on-error: true
@@ -78,5 +80,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-apks
-          path: "**/build/outputs/**/*.apk"
+          path: "android/**/build/outputs/**/*.apk"
           if-no-files-found: ignore

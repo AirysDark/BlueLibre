@@ -1,4 +1,4 @@
-name: BlueLibre AI Autobuilder — Android (OpenAI with llama fallback)
+name: BlueLibre AI Autobuilder — Android (OpenAI → llama fallback, CMake)
 
 on:
   push:
@@ -43,6 +43,7 @@ jobs:
       - name: Set up Gradle (fallback)
         uses: gradle/gradle-build-action@v2
 
+      # Build + wrapper detection + logging; always produce build.log and EXIT_CODE
       - name: Build (capture)
         id: build
         shell: bash
@@ -71,14 +72,16 @@ jobs:
           exit 0
         continue-on-error: true
 
-      - name: Install llama.cpp for fallback
+      # llama.cpp now uses CMake; build the CLI for fallback usage
+      - name: Build llama.cpp (CMake)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential
-          git clone --depth=1 https://github.com/ggerganov/llama.cpp
-          cd llama.cpp && make -j
-          echo "LLAMA_CPP_BIN=$PWD/main" >> $GITHUB_ENV
+          git clone --depth=1 https://github.com/ggml-org/llama.cpp
+          cd llama.cpp
+          cmake -S . -B build -D CMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+          echo "LLAMA_CPP_BIN=$PWD/build/bin/llama-cli" >> $GITHUB_ENV
 
+      # Attempt AI auto-fix. If OpenAI returns quota/4xx, script falls back to llama.cpp.
       - name: Attempt AI auto-fix (OpenAI → llama fallback)
         if: always() && steps.build.outputs.EXIT_CODE != '0'
         env:
@@ -86,10 +89,11 @@ jobs:
           FALLBACK_PROVIDER: llama
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
-          # Point MODEL_PATH to a model available in CI (upload or fetch in a prior step)
+          # Provide a GGUF model path (download it in a prior step or store in repo/artifacts)
           MODEL_PATH: ${{ vars.MODEL_PATH || 'models/Llama-3-8B-Instruct.Q4_K_M.gguf' }}
           AI_BUILDER_ATTEMPTS: "2"
           BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}
+          # If the CLI name differs, you can pin it here: LLAMA_CPP_BIN: ${{ env.LLAMA_CPP_BIN }}
         run: python3 tools/ai_autobuilder.py || true
 
       - name: Push branch with fixes (if any)

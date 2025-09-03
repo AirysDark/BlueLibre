@@ -1,4 +1,4 @@
-name: BlueLibre AI Autobuilder — Android (robust)
+name: BlueLibre AI Autobuilder — Android (debug)
 
 on:
   push:
@@ -40,50 +40,51 @@ jobs:
         run: |
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      # Provide system Gradle in case we don't have a wrapper
       - name: Set up Gradle (fallback)
         uses: gradle/gradle-build-action@v2
 
-      # Build + wrapper detection + logging, and CAPTURE EXIT CODE
       - name: Build (capture)
         id: build
         shell: bash
         run: |
           set -euxo pipefail
-
-          # 1) Locate wrapper (handles your android/gardle layout)
           CANDIDATES=("android/gardle/gradlew" "android/gradlew" "gradlew")
           WRAP=""
           for c in "${CANDIDATES[@]}"; do
             if [ -f "$c" ]; then WRAP="$c"; break; fi
           done
-
-          # 2) Decide build command
           if [ -n "$WRAP" ]; then
             chmod +x "$WRAP"
             WORKDIR="$(dirname "$WRAP")"
             [ "$WORKDIR" = "." ] || cd "$WORKDIR"
             CMD="./$(basename "$WRAP") assembleDebug --stacktrace"
           else
-            echo "No wrapper found; using system Gradle via gradle/gradle-build-action"
             CMD='gradle -p android assembleDebug --stacktrace'
           fi
-
           echo "BUILD_CMD=$CMD" >> "$GITHUB_OUTPUT"
-
-          # 3) Run build and capture exit code, always write build.log at repo root
           set +e
           bash -lc "$CMD" | tee build.log
           EXIT=$?
           set -e
           echo "EXIT_CODE=$EXIT" >> "$GITHUB_OUTPUT"
           [ -f build.log ] || echo "(no build output captured)" > build.log
-
-          # Do not fail the step so the next steps can run
           exit 0
         continue-on-error: true
 
-      # Run AI fixer if the build EXIT_CODE != 0 (even if the step “succeeded”)
+      - name: Debug env before AI step
+        if: always()
+        shell: bash
+        run: |
+          echo "Model (from vars): ${{ vars.OPENAI_MODEL }}"
+          if [ -n "${{ secrets.OPENAI_API_KEY }}" ]; then
+            echo "OPENAI_API_KEY is set ✅"
+          else
+            echo "OPENAI_API_KEY is MISSING ❌"
+          fi
+          echo "BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}"
+          echo "---- tail build.log ----"
+          tail -n 80 build.log || true
+
       - name: Attempt AI auto-fix with OpenAI
         if: always() && steps.build.outputs.EXIT_CODE != '0'
         env:
@@ -98,10 +99,7 @@ jobs:
         if: always() && steps.build.outputs.EXIT_CODE != '0'
         run: |
           set -eux
-          if git diff --quiet HEAD; then
-            echo "No changes to commit."
-            exit 0
-          fi
+          if git diff --quiet HEAD; then exit 0; fi
           BRANCH="fix/android-ai-autobuilder-${{ github.run_id }}"
           git config user.name "ai-autobuilder[bot]"
           git config user.email "ai-autobuilder@users.noreply.github.com"

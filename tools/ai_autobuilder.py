@@ -2,7 +2,6 @@
 import os, sys, subprocess, json, tempfile, re, pathlib, requests
 
 PROVIDER = os.getenv("PROVIDER", "openai")  # default OpenAI for BlueLibre
-# Use a widely available model by default; can override via repo variable OPENAI_MODEL
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 MAX_ATTEMPTS = int(os.getenv("AI_BUILDER_ATTEMPTS", "3"))
 BUILD_CMD = os.getenv("BUILD_CMD", "./gradlew assembleDebug --stacktrace")
@@ -125,6 +124,7 @@ def apply_patch(diff_text):
 def main():
     print("== AI Autobuilder: BlueLibre preset ==")
     print("Project:", PROJECT_ROOT)
+    print(f"Provider: {PROVIDER}, Model: {OPENAI_MODEL}")
     if not (PROJECT_ROOT / ".git").exists():
         run("git init")
         run('git config user.name "ai-autobuilder"')

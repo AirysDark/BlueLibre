@@ -1,110 +1,41 @@
-# librepods
+# BlueLibre — AI Autobuilder (Android/Gradle, OpenAI preset)
 
-A cross-platform AirPods desktop & Android client.  
-Supports model detection and battery status display for **AirPods 1, 2, 3, 4, 4 ANC, Pro, Pro 2, and Max**.
+This drops into your BlueLibre repo and makes CI self-heal Android build failures.
 
----
+## GitHub setup (once)
 
-=======
->>>>>>> b9ad7d31f761902b107364aa10d1d236867ab441
-## 🖥️ Windows 10/11 (x64)
-
-```powershell
-git clone https://github.com/AirysDark/librepods
-cd librepods
-
-# Bootstrap vcpkg
-git clone https://github.com/microsoft/vcpkg .vcpkg
-.\.vcpkg\bootstrap-vcpkg.bat
-
-# Configure & build (uses CMakePresets.json)
-cmake --preset win64-release
-cmake --build --preset win64-release-build --parallel
-cmake --install build --prefix build\out
+1) Copy these into your repo:
+```
+tools/ai_autobuilder.py
+.github/workflows/ai-autobuilder.yml
 ```
 
----
+2) Repo → Settings → Secrets and variables → Actions
+- **Secret**: `OPENAI_API_KEY = sk-...yourkey...`
+- **Variable**: `BUILD_CMD = ./gradlew assembleDebug --stacktrace`
+- (Optional) **Variable**: `OPENAI_MODEL = gpt-4.1-mini`
 
-## 🐧 Linux (Ubuntu/Debian)
+3) Push any change or open the **Actions** tab → run **BlueLibre AI Autobuilder**.
 
+## How it works
+- Runs your Gradle build, captures logs to `build.log`.
+- Asks OpenAI for a minimal unified-diff patch to fix the failure.
+- Applies the patch, retries the build up to 2–3 times.
+- If still failing, pushes a `fix/ai-autobuilder-<run_id>` branch with the changes.
+
+## Local use
 ```bash
-sudo apt update
-sudo apt install -y build-essential cmake ninja-build pkg-config libdbus-1-dev libbluetooth-dev
-
-git clone https://github.com/AirysDark/librepods
-cd librepods
-
-git rm airpods_models.cpp && git commit -m "fix: remove duplicate root airpods_models.cpp"  # if present
-
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
-sudo cmake --install build --prefix /usr/local
+export OPENAI_API_KEY=sk-...yourkey...
+export PROVIDER=openai
+export BUILD_CMD="./gradlew assembleDebug --stacktrace"
+python3 tools/ai_autobuilder.py
 ```
 
----
-
-## 🤖 Android
-
+## Revert a bad patch
 ```bash
-cd android
-chmod +x gradlew
-./gradlew :app:assembleDebug
+git apply -R .pre_ai_fix.patch
 ```
 
-Or open `android/` in **Android Studio** (Java 17 + NDK + CMake required).
-
----
-
-## ⚙️ GitHub Actions (CI)
-
-### Windows workflow
-Ensure the job:
-- Runs on `windows-latest`
-- Installs **Ninja**
-- Bootstraps **vcpkg**
-- Calls `cmake --preset win64-release` and builds
-
-Example steps:
-
-```yaml
-- uses: actions/checkout@v4
-- name: Install Ninja
-  run: choco install ninja -y
-- name: Bootstrap vcpkg
-  run: |
-    git clone https://github.com/microsoft/vcpkg .vcpkg
-    .\.vcpkg\bootstrap-vcpkg.bat
-- name: Configure
-  run: cmake --preset win64-release
-- name: Build
-  run: cmake --build --preset win64-release-build --parallel
-```
-
-### Android workflow
-- Use **Java 17 (Temurin)**
-- Install **NDK + CMake** in runner
-- Make `gradlew` executable
-- Build with `:app:assembleDebug`
-
-Example steps:
-
-```yaml
-- uses: actions/checkout@v4
-- uses: actions/setup-java@v4
-  with:
-    distribution: temurin
-    java-version: "17"
-- name: Grant execute to gradlew
-  run: chmod +x android/gradlew
-- name: Build debug APK
-  working-directory: android
-  run: ./gradlew :app:assembleDebug --no-daemon
-```
-
----
-
-## 📦 Features
-- WinRT backend for Windows
-- BlueZ/DBus backend for Linux
-- Kotlin BLE + JNI bridge for Android
-- All AirPods models supported with fallback display
+## Notes
+- This workflow sets up JDK 17 and Android SDK platform 34 / build-tools 34.0.0.
+- Adjust SDK versions in `.github/workflows/ai-autobuilder.yml` if your project needs a different API level.

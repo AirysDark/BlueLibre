@@ -3,6 +3,7 @@ import os, sys, subprocess, json, tempfile, re, pathlib, requests
 
 PROVIDER = os.getenv("PROVIDER", "openai")  # default to OpenAI
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
 # Fallback settings
 FALLBACK_PROVIDER = os.getenv("FALLBACK_PROVIDER", "llama")
 LLAMA_CPP_BIN = os.getenv("LLAMA_CPP_BIN", "llama-cli")
@@ -102,8 +103,18 @@ def _call_openai(prompt):
     return data["choices"][0]["message"]["content"]
 
 def _call_llama(prompt):
-    cmd = f'{LLAMA_CPP_BIN} -m "{LLAMA_MODEL_PATH}" -p {json.dumps(prompt)} -n 2048 --temp 0.2'
-    out = subprocess.run(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    mp = pathlib.Path(LLAMA_MODEL_PATH)
+    if not mp.exists():
+        print(f"llama.cpp: MODEL_PATH not found: {mp}. Provide a GGUF model or set MODEL_PATH env.")
+        raise RuntimeError("llama_failed")
+    args = [
+        LLAMA_CPP_BIN,
+        "-m", str(mp),
+        "-p", prompt,
+        "-n", "2048",
+        "--temp", "0.2",
+    ]
+    out = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if out.returncode != 0:
         print("llama.cpp error output:\n", out.stdout)
         raise RuntimeError("llama_failed")
@@ -148,7 +159,7 @@ def apply_patch(diff_text):
         os.unlink(tmp.name)
 
 def main():
-    print("== AI Autobuilder (with OpenAI→llama fallback) ==")
+    print("== AI Autobuilder (OpenAI → llama fallback) ==")
     print("Project:", PROJECT_ROOT)
     print(f"Provider: {PROVIDER}, Model: {OPENAI_MODEL}, Fallback: {FALLBACK_PROVIDER}")
     if not (PROJECT_ROOT / ".git").exists():

@@ -1,4 +1,4 @@
-name: BlueLibre AI Autobuilder — Android (debug)
+name: BlueLibre AI Autobuilder — Android (OpenAI with llama fallback)
 
 on:
   push:
@@ -71,26 +71,23 @@ jobs:
           exit 0
         continue-on-error: true
 
-      - name: Debug env before AI step
-        if: always()
-        shell: bash
+      - name: Install llama.cpp for fallback
         run: |
-          echo "Model (from vars): ${{ vars.OPENAI_MODEL }}"
-          if [ -n "${{ secrets.OPENAI_API_KEY }}" ]; then
-            echo "OPENAI_API_KEY is set ✅"
-          else
-            echo "OPENAI_API_KEY is MISSING ❌"
-          fi
-          echo "BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}"
-          echo "---- tail build.log ----"
-          tail -n 80 build.log || true
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+          git clone --depth=1 https://github.com/ggerganov/llama.cpp
+          cd llama.cpp && make -j
+          echo "LLAMA_CPP_BIN=$PWD/main" >> $GITHUB_ENV
 
-      - name: Attempt AI auto-fix with OpenAI
+      - name: Attempt AI auto-fix (OpenAI → llama fallback)
         if: always() && steps.build.outputs.EXIT_CODE != '0'
         env:
           PROVIDER: openai
+          FALLBACK_PROVIDER: llama
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+          # Point MODEL_PATH to a model available in CI (upload or fetch in a prior step)
+          MODEL_PATH: ${{ vars.MODEL_PATH || 'models/Llama-3-8B-Instruct.Q4_K_M.gguf' }}
           AI_BUILDER_ATTEMPTS: "2"
           BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}
         run: python3 tools/ai_autobuilder.py || true

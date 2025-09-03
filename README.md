@@ -1,41 +1,38 @@
-# BlueLibre — AI Autobuilder (Android/Gradle, OpenAI preset)
+# BlueLibre — AI Autobuilder with OpenAI → llama.cpp fallback
 
-This drops into your BlueLibre repo and makes CI self-heal Android build failures.
+This package adds a CI workflow that tries OpenAI first and, on quota or request errors, falls back to a local llama.cpp model.
 
-## GitHub setup (once)
+## Files
+- `tools/ai_autobuilder.py` — patched with fallback
+- `.github/workflows/ai-autobuilder-android.yml` — Android workflow with wrapper autodetect, exit-code capture, and llama.cpp install
 
-1) Copy these into your repo:
-```
-tools/ai_autobuilder.py
-.github/workflows/ai-autobuilder.yml
-```
+## GitHub Actions setup
+1. Add files to your repo and commit.
+2. Settings → Secrets and variables → Actions:
+   - **Secret**: `OPENAI_API_KEY = sk-...` (optional if you rely only on llama)
+   - **Variable**: `OPENAI_MODEL = gpt-4o-mini` (recommended)
+   - **Variable**: `MODEL_PATH = models/Llama-3-8B-Instruct.Q4_K_M.gguf` (path to your GGUF in CI)
 
-2) Repo → Settings → Secrets and variables → Actions
-- **Secret**: `OPENAI_API_KEY = sk-...yourkey...`
-- **Variable**: `BUILD_CMD = ./gradlew assembleDebug --stacktrace`
-- (Optional) **Variable**: `OPENAI_MODEL = gpt-4.1-mini`
+## Providing a GGUF model in CI
+- Upload your model to a private release or artifact and download it in a prior step, e.g.:
+  ```yaml
+  - name: Fetch GGUF model
+    run: |
+      mkdir -p models
+      curl -L -o models/Llama-3-8B-Instruct.Q4_K_M.gguf "<YOUR_SIGNED_URL>"
+  ```
 
-3) Push any change or open the **Actions** tab → run **BlueLibre AI Autobuilder**.
-
-## How it works
-- Runs your Gradle build, captures logs to `build.log`.
-- Asks OpenAI for a minimal unified-diff patch to fix the failure.
-- Applies the patch, retries the build up to 2–3 times.
-- If still failing, pushes a `fix/ai-autobuilder-<run_id>` branch with the changes.
-
-## Local use
+## Local run
 ```bash
-export OPENAI_API_KEY=sk-...yourkey...
+export OPENAI_API_KEY=sk-...          # optional if using llama only
 export PROVIDER=openai
-export BUILD_CMD="./gradlew assembleDebug --stacktrace"
+export FALLBACK_PROVIDER=llama
+export MODEL_PATH=~/models/Llama-3-8B-Instruct.Q4_K_M.gguf
+export BUILD_CMD="cd android && ./gradlew assembleDebug --stacktrace"
 python3 tools/ai_autobuilder.py
 ```
 
-## Revert a bad patch
+## Revert a patch
 ```bash
 git apply -R .pre_ai_fix.patch
 ```
-
-## Notes
-- This workflow sets up JDK 17 and Android SDK platform 34 / build-tools 34.0.0.
-- Adjust SDK versions in `.github/workflows/ai-autobuilder.yml` if your project needs a different API level.

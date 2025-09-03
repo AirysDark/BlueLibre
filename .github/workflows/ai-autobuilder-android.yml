@@ -1,4 +1,4 @@
-name: BlueLibre AI Autobuilder — Android (wrapper autodetect)
+name: BlueLibre AI Autobuilder — Android (robust)
 
 on:
   push:
@@ -40,57 +40,44 @@ jobs:
         run: |
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      # --- Autodetect wrapper path (handles android/gardle) ---
-      - name: Locate/ensure Gradle wrapper
-        id: gw
+      # Provide system Gradle in case we don't have a wrapper
+      - name: Set up Gradle (fallback)
+        uses: gradle/gradle-build-action@v2
+
+      # EVERYTHING happens here so a failure triggers the AI fixer
+      - name: Build (capture)
+        id: build
         shell: bash
         run: |
-          set -eux
-          # Try known locations (your case is android/gardle/gradlew)
+          set -euxo pipefail
+
+          # 1) Locate wrapper (handles your android/gardle layout)
           CANDIDATES=("android/gardle/gradlew" "android/gradlew" "gradlew")
           WRAP=""
           for c in "${CANDIDATES[@]}"; do
             if [ -f "$c" ]; then WRAP="$c"; break; fi
           done
 
-          if [ -z "$WRAP" ]; then
-            echo "No wrapper found; generating one in android/ ..."
-            cd android
-            curl -sL https://services.gradle.org/distributions/gradle-8.7-bin.zip -o gradle.zip
-            unzip -q gradle.zip -d $HOME/gradle
-            export PATH="$HOME/gradle/gradle-8.7/bin:$PATH"
-            gradle --version
-            gradle wrapper --gradle-version 8.7
-            WRAP="android/gradlew"
-            cd -
+          # 2) If wrapper found, chmod + use it; else fall back to system gradle
+          if [ -n "$WRAP" ]; then
+            chmod +x "$WRAP"
+            WORKDIR="$(dirname "$WRAP")"
+            if [ "$WORKDIR" = "." ]; then WORKDIR="."; fi
+            BUILD_CMD="cd \"$WORKDIR\" && ./$(basename \"$WRAP\") assembleDebug --stacktrace"
+          else
+            echo "No wrapper found; using system Gradle via gradle/gradle-build-action"
+            BUILD_CMD='gradle -p android assembleDebug --stacktrace'
           fi
 
-          chmod +x "$WRAP"
-          echo "WRAP=$WRAP" >> "$GITHUB_OUTPUT"
-
-          # Determine working dir (where to run from)
-          # If wrapper is android/gardle/gradlew -> workdir=android/gardle
-          # If wrapper is android/gradlew         -> workdir=android
-          # If wrapper is gradlew                 -> workdir=.
-          WORKDIR="$(dirname "$WRAP")"
-          if [ "$WORKDIR" = "." ]; then WORKDIR="."; fi
-          echo "WORKDIR=$WORKDIR" >> "$GITHUB_OUTPUT"
-          echo "Using wrapper at: $WRAP (workdir=$WORKDIR)"
-
-      - name: Build (capture)
-        id: build
-        shell: bash
-        run: |
-          set -euxo pipefail
-          WRAP="${{ steps.gw.outputs.WRAP }}"
-          WORKDIR="${{ steps.gw.outputs.WORKDIR }}"
-          BUILD_CMD="cd \"$WORKDIR\" && ./$(basename \"$WRAP\") assembleDebug --stacktrace"
           echo "BUILD_CMD=$BUILD_CMD" >> $GITHUB_OUTPUT
+
+          # 3) Run the build and tee output so AI sees the logs
+          #    Keep all output in build.log at repo root for the autobuilder
           bash -lc "$BUILD_CMD" | tee build.log
         continue-on-error: true
 
       - name: Attempt AI auto-fix with OpenAI
-        if: steps.build.outcome != 'success'
+        if: always() && steps.build.outcome != 'success'
         env:
           PROVIDER: openai
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -100,10 +87,13 @@ jobs:
         run: python3 tools/ai_autobuilder.py || true
 
       - name: Push branch with fixes (if any)
-        if: steps.build.outcome != 'success'
+        if: always() && steps.build.outcome != 'success'
         run: |
           set -eux
-          if git diff --quiet HEAD; then exit 0; fi
+          if git diff --quiet HEAD; then
+            echo "No changes to commit."
+            exit 0
+          fi
           BRANCH="fix/android-ai-autobuilder-${{ github.run_id }}"
           git config user.name "ai-autobuilder[bot]"
           git config user.email "ai-autobuilder@users.noreply.github.com"

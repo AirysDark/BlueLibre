@@ -1,5 +1,3 @@
-name: Bluelibre_AiHelper
-
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -7,7 +5,7 @@ on:
     inputs:
       pr_number:
         description: "PR number to review (for manual runs)"
-        required: false
+        required: true
         type: string
 
 permissions:
@@ -24,8 +22,7 @@ jobs:
         uses: AirysDark/Bluelibre_AiHelper@db9b9eccedf13779e38c6430ecf87572852fe3b7
         with:
           github_token: ${{ github.token }}
-          google_api_key: ${{ secrets.GOOGLE_API_KEY }}         # optional
-          openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }} # optional
+          google_api_key: ${{ secrets.GOOGLE_API_KEY }}
+          openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
         env:
-          # lets you run it manually via "Run workflow" by specifying a PR number
-          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_NUMBER: ${{ inputs.pr_number }}   # <- used only for workflow_dispatch

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-import os, sys, subprocess, json, tempfile, re, pathlib
+import os, sys, subprocess, json, tempfile, re, pathlib, requests
 
 PROVIDER = os.getenv("PROVIDER", "openai")  # default OpenAI for BlueLibre
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+# Use a widely available model by default; can override via repo variable OPENAI_MODEL
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 MAX_ATTEMPTS = int(os.getenv("AI_BUILDER_ATTEMPTS", "3"))
 BUILD_CMD = os.getenv("BUILD_CMD", "./gradlew assembleDebug --stacktrace")
 PROJECT_ROOT = pathlib.Path(os.getenv("PROJECT_ROOT", ".")).resolve()
 
 PROMPT = """You are an automated build fixer. You are working in a Git repository.
-Goal: Fix Android/Gradle build or Lint/Test failures by editing files minimally.
+Goal: Fix build/test failures by editing files minimally.
 
 Repository file list (truncated):
 {repo_tree}
@@ -71,18 +72,31 @@ def run_build():
     return p.wait()
 
 def call_llm(prompt):
-    import requests
     key = os.environ["OPENAI_API_KEY"]
     url = "https://api.openai.com/v1/chat/completions"
     payload = {
         "model": OPENAI_MODEL,
-        "messages": [{"role":"user","content":prompt}],
-        "temperature": 0.2
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.2,
     }
-    r = requests.post(url, headers={"Authorization": f"Bearer {key}",
-                                    "Content-Type":"application/json"}, json=payload, timeout=180)
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    if os.getenv("OPENAI_ORG"):
+        headers["OpenAI-Organization"] = os.environ["OPENAI_ORG"]
+
+    r = requests.post(url, headers=headers, json=payload, timeout=180)
+    if r.status_code >= 400:
+        try:
+            err = r.json()
+        except Exception:
+            err = {"raw": r.text}
+        print("OpenAI API error:", json.dumps(err, indent=2))
+        r.raise_for_status()
+
+    data = r.json()
+    return data["choices"][0]["message"]["content"]
 
 def extract_unified_diff(text):
     m = re.search(r'(?ms)^--- [^\n]+\n\+\+\+ [^\n]+\n', text)

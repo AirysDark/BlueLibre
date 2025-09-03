@@ -1,39 +1,99 @@
-name: AI Autobuilder — Bootstrap (multi-purpose)
+name: AI Autobuilder — Android (OpenAI → llama fallback + TinyLlama)
 
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: write
-  pull-requests: write
-
 jobs:
-  bootstrap:
+  android:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        with: { fetch-depth: 0 }
 
       - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install requests
+
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: android-actions/setup-android@v3
+      - run: yes | sdkmanager --licenses
+      - run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Build (capture)
+        id: build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          CANDIDATES=("android/gardle/gradlew" "android/gradlew" "gradlew")
+          WRAP=""
+          for c in "${CANDIDATES[@]}"; do
+            if [ -f "$c" ]; then WRAP="$c"; break; fi
+          done
+          if [ -n "$WRAP" ]; then
+            chmod +x "$WRAP"
+            WORKDIR="$(dirname "$WRAP")"
+            [ "$WORKDIR" = "." ] || cd "$WORKDIR"
+            CMD="./$(basename "$WRAP") assembleDebug --stacktrace"
+          else
+            CMD='gradle -p android assembleDebug --stacktrace'
+          fi
+          echo "BUILD_CMD=$CMD" >> "$GITHUB_OUTPUT"
+          set +e; bash -lc "$CMD" | tee build.log; EXIT=$?; set -e
+          echo "EXIT_CODE=$EXIT" >> "$GITHUB_OUTPUT"
+          [ -f build.log ] || echo "(no build output captured)" > build.log
+          exit 0
+        continue-on-error: true
+
+      - name: Build llama.cpp (CMake, no CURL)
+        run: |
+          git clone --depth=1 https://github.com/ggml-org/llama.cpp
+          cd llama.cpp
+          cmake -S . -B build -D CMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF
+          cmake --build build -j
+          echo "LLAMA_CPP_BIN=$PWD/build/bin/llama-cli" >> $GITHUB_ENV
+
+      - name: Fetch GGUF model (TinyLlama)
+        run: |
+          mkdir -p models
+          curl -L -o models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
+            https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+
+      - name: Attempt AI auto-fix (OpenAI → llama fallback)
+        if: always() && steps.build.outputs.EXIT_CODE != '0'
+        env:
+          PROVIDER: openai
+          FALLBACK_PROVIDER: llama
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+          MODEL_PATH: models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+          AI_BUILDER_ATTEMPTS: "2"
+          BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}
+        run: python3 tools/ai_autobuilder.py || true
+
+      - name: Push branch with fixes (if any)
+        if: always() && steps.build.outputs.EXIT_CODE != '0'
+        run: |
+          set -eux
+          if git diff --quiet HEAD; then exit 0; fi
+          BRANCH="fix/android-ai-autobuilder-${{ github.run_id }}"
+          git config user.name "ai-autobuilder[bot]"
+          git config user.email "ai-autobuilder@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add -A
+          git commit -m "AI autobuilder: Android fixes" || true
+          git push --set-upstream origin "$BRANCH" || true
+
+      - name: Upload APKs (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          python-version: "3.11"
-
-      - name: Install deps
-        run: pip install requests pyyaml
-
-      - name: Generate workflows + autobuilder script
-        run: python3 tools/ai_bootstrapper.py
-
-      - name: Create PR with generated workflows
-        uses: peter-evans/create-pull-request@v6
-        with:
-          branch: ai/autobuilder-bootstrap
-          title: "AI Autobuilder: bootstrap (multi-purpose)"
-          commit-message: "chore: generate AI autobuilder workflows + script (multi-purpose)"
-          body: |
-            This PR was created by the bootstrap workflow.
-            - Detects project type (android / cmake / node / python / unknown)
-            - Generates a matching CI workflow with build capture
-            - Adds AI autobuilder (OpenAI → llama fallback) and TinyLlama GGUF fetch
-          labels: automation, ci
+          name: android-apks
+          path: "**/build/outputs/**/*.apk"
+          if-no-files-found: ignore

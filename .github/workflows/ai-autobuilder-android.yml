@@ -1,5 +1,5 @@
-name: BlueLibre AI Autobuilder — Android (OpenAI → llama fallback, CMake no-CURL)
-
+name: BlueLibre AI Autobuilder — Android (OpenAI → llama fallback + TinyLlama)
+runs-on: self-hosted
 on:
   push:
   pull_request:
@@ -81,6 +81,13 @@ jobs:
           cmake --build build -j
           echo "LLAMA_CPP_BIN=$PWD/build/bin/llama-cli" >> $GITHUB_ENV
 
+      # Fetch a small GGUF model for fallback (TinyLlama ~ 250MB)
+      - name: Fetch GGUF model (TinyLlama)
+        run: |
+          mkdir -p models
+          curl -L -o models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
+            https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+
       # Attempt AI auto-fix. If OpenAI errors (e.g., quota), script falls back to llama.cpp.
       - name: Attempt AI auto-fix (OpenAI → llama fallback)
         if: always() && steps.build.outputs.EXIT_CODE != '0'
@@ -89,12 +96,9 @@ jobs:
           FALLBACK_PROVIDER: llama
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
-          # Provide a GGUF model path (download it in a prior step or store in repo/artifacts)
-          MODEL_PATH: ${{ vars.MODEL_PATH || 'models/Llama-3-8B-Instruct.Q4_K_M.gguf' }}
+          MODEL_PATH: models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
           AI_BUILDER_ATTEMPTS: "2"
           BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}
-          # Optional override if your llama cpp binary name/location differs:
-          # LLAMA_CPP_BIN: ${{ env.LLAMA_CPP_BIN }}
         run: python3 tools/ai_autobuilder.py || true
 
       - name: Push branch with fixes (if any)

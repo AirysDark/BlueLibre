@@ -1,4 +1,4 @@
-name: BlueLibre AI Autobuilder — Android (OpenAI → llama fallback, CMake)
+name: BlueLibre AI Autobuilder — Android (OpenAI → llama fallback, CMake no-CURL)
 
 on:
   push:
@@ -72,16 +72,16 @@ jobs:
           exit 0
         continue-on-error: true
 
-      # llama.cpp now uses CMake; build the CLI for fallback usage
-      - name: Build llama.cpp (CMake)
+      # llama.cpp via CMake with CURL disabled (no libcurl needed)
+      - name: Build llama.cpp (CMake, no CURL)
         run: |
           git clone --depth=1 https://github.com/ggml-org/llama.cpp
           cd llama.cpp
-          cmake -S . -B build -D CMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -D CMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF
           cmake --build build -j
           echo "LLAMA_CPP_BIN=$PWD/build/bin/llama-cli" >> $GITHUB_ENV
 
-      # Attempt AI auto-fix. If OpenAI returns quota/4xx, script falls back to llama.cpp.
+      # Attempt AI auto-fix. If OpenAI errors (e.g., quota), script falls back to llama.cpp.
       - name: Attempt AI auto-fix (OpenAI → llama fallback)
         if: always() && steps.build.outputs.EXIT_CODE != '0'
         env:
@@ -93,7 +93,8 @@ jobs:
           MODEL_PATH: ${{ vars.MODEL_PATH || 'models/Llama-3-8B-Instruct.Q4_K_M.gguf' }}
           AI_BUILDER_ATTEMPTS: "2"
           BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}
-          # If the CLI name differs, you can pin it here: LLAMA_CPP_BIN: ${{ env.LLAMA_CPP_BIN }}
+          # Optional override if your llama cpp binary name/location differs:
+          # LLAMA_CPP_BIN: ${{ env.LLAMA_CPP_BIN }}
         run: python3 tools/ai_autobuilder.py || true
 
       - name: Push branch with fixes (if any)

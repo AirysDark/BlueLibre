@@ -1,4 +1,4 @@
-name: BlueLibre AI Autobuilder — Android
+name: BlueLibre AI Autobuilder — Android (wrapper autodetect)
 
 on:
   push:
@@ -40,14 +40,51 @@ jobs:
         run: |
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Make Gradle wrapper executable
-        run: chmod +x android/gradlew
+      # --- Autodetect wrapper path (handles android/gardle) ---
+      - name: Locate/ensure Gradle wrapper
+        id: gw
+        shell: bash
+        run: |
+          set -eux
+          # Try known locations (your case is android/gardle/gradlew)
+          CANDIDATES=("android/gardle/gradlew" "android/gradlew" "gradlew")
+          WRAP=""
+          for c in "${CANDIDATES[@]}"; do
+            if [ -f "$c" ]; then WRAP="$c"; break; fi
+          done
+
+          if [ -z "$WRAP" ]; then
+            echo "No wrapper found; generating one in android/ ..."
+            cd android
+            curl -sL https://services.gradle.org/distributions/gradle-8.7-bin.zip -o gradle.zip
+            unzip -q gradle.zip -d $HOME/gradle
+            export PATH="$HOME/gradle/gradle-8.7/bin:$PATH"
+            gradle --version
+            gradle wrapper --gradle-version 8.7
+            WRAP="android/gradlew"
+            cd -
+          fi
+
+          chmod +x "$WRAP"
+          echo "WRAP=$WRAP" >> "$GITHUB_OUTPUT"
+
+          # Determine working dir (where to run from)
+          # If wrapper is android/gardle/gradlew -> workdir=android/gardle
+          # If wrapper is android/gradlew         -> workdir=android
+          # If wrapper is gradlew                 -> workdir=.
+          WORKDIR="$(dirname "$WRAP")"
+          if [ "$WORKDIR" = "." ]; then WORKDIR="."; fi
+          echo "WORKDIR=$WORKDIR" >> "$GITHUB_OUTPUT"
+          echo "Using wrapper at: $WRAP (workdir=$WORKDIR)"
 
       - name: Build (capture)
         id: build
+        shell: bash
         run: |
           set -euxo pipefail
-          BUILD_CMD="cd android && ./gradlew assembleDebug --stacktrace"
+          WRAP="${{ steps.gw.outputs.WRAP }}"
+          WORKDIR="${{ steps.gw.outputs.WORKDIR }}"
+          BUILD_CMD="cd \"$WORKDIR\" && ./$(basename \"$WRAP\") assembleDebug --stacktrace"
           echo "BUILD_CMD=$BUILD_CMD" >> $GITHUB_OUTPUT
           bash -lc "$BUILD_CMD" | tee build.log
         continue-on-error: true
@@ -80,5 +117,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-apks
-          path: "android/**/build/outputs/**/*.apk"
+          path: "**/build/outputs/**/*.apk"
           if-no-files-found: ignore

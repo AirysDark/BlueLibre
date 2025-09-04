@@ -29,7 +29,8 @@ jobs:
           mkdir -p tools
           BASE_URL="https://raw.githubusercontent.com/AirysDark-AI/AirysDark-AI_builder/main/tools"
           curl -fL "$BASE_URL/AirysDark-AI_detector.py" -o tools/AirysDark-AI_detector.py
-          # (Probe & Builder are fetched later by the generated workflows)
+          curl -fL "$BASE_URL/AirysDark-AI_probe.py"     -o tools/AirysDark-AI_probe.py
+          curl -fL "$BASE_URL/AirysDark-AI_builder.py"  -o tools/AirysDark-AI_builder.py
           ls -la tools
 
       - name: Generate PROBE workflows (one per detected type)
@@ -53,7 +54,6 @@ jobs:
       - name: Create PR with PROBE workflows
         uses: peter-evans/create-pull-request@v6
         with:
-          # Use a PAT with repo + workflow scopes for cross-repo/fork PRs
           token: ${{ secrets.BOT_TOKEN }}
           branch: ai/airysdark-ai-probes
           title: "AirysDark-AI: add per-type PROBE workflows"
@@ -63,14 +63,14 @@ jobs:
 
             How to proceed:
             1) Merge this PR.
-            2) In Actions, run the desired "AirysDark-AI — Probe <Type>" workflow.
-               - It will detect the exact BUILD_CMD for your repo.
-               - It will then generate the final build workflow `.github/workflows/AirysDark-AI_<type>.yml`
+            2) Run the desired "AirysDark-AI â€ Probe <Type>" workflow from Actions.
+               - It will scan the entire repo, pick the correct BUILD_CMD.
+               - It will then generate the final AI build workflow `.github/workflows/AirysDark-AI_<type>.yml`
                  and open a second PR with that workflow.
             3) Merge the second PR to enable the final build+AI workflow for that type.
 
             Notes:
-            - These probe workflows will fetch tools from the canonical repo:
+            - These probe workflows use the canonical tools:
               https://github.com/AirysDark-AI/AirysDark-AI_builder/tree/main/tools
             - Ensure you set `BOT_TOKEN` (a PAT with `repo` + `workflow` scopes) in repo Secrets.
           labels: automation, ci

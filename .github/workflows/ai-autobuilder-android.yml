@@ -1,4 +1,4 @@
-name: AI Autobuilder — Android
+name: AI Autobuilder — Android (:app)
 
 on:
   push:
@@ -16,40 +16,43 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
+      # Needed for ai_autobuilder.py (OpenAI + HTTP)
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - run: pip install requests
 
+      # Java + Android SDK
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "17" }
       - uses: android-actions/setup-android@v3
       - run: yes | sdkmanager --licenses
       - run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
+      # Build (explicit app module)
       - name: Build (capture)
+      # continue even if it fails; AI step will try to fix
         id: build
         run: |
           set -euxo pipefail
-          CANDIDATES=("android/gardle/gradlew" "android/gradlew" "gradlew")
-          WRAP=""
-          for c in "${CANDIDATES[@]}"; do
-            if [ -f "$c" ]; then WRAP="$c"; break; fi
-          done
-          if [ -n "$WRAP" ]; then
-            chmod +x "$WRAP"
-            WORKDIR="$(dirname "$WRAP")"
-            [ "$WORKDIR" = "." ] || cd "$WORKDIR"
-            CMD="./$(basename "$WRAP") assembleDebug --stacktrace"
+          if [ -f "gradlew" ]; then
+            chmod +x gradlew
+            CMD="./gradlew :app:assembleDebug --stacktrace"
+          elif [ -f "android/gradlew" ]; then
+            chmod +x android/gradlew
+            cd android
+            CMD="./gradlew :app:assembleDebug --stacktrace"
           else
-            CMD='gradle -p android assembleDebug --stacktrace'
+            # Fallback tries in case wrapper is nested differently
+            CMD="gradle :app:assembleDebug --stacktrace"
           fi
           echo "BUILD_CMD=$CMD" >> "$GITHUB_OUTPUT"
           set +e; bash -lc "$CMD" | tee build.log; EXIT=$?; set -e
           echo "EXIT_CODE=$EXIT" >> "$GITHUB_OUTPUT"
-          [ -f build.log ] || echo "(no build output captured)" > build.log
+          [ -s build.log ] || echo "(no build output captured)" > build.log
           exit 0
         continue-on-error: true
 
+      # Build local fallback LLM (llama.cpp) and fetch TinyLlama
       - name: Build llama.cpp (CMake, no CURL)
         run: |
           git clone --depth=1 https://github.com/ggml-org/llama.cpp
@@ -64,7 +67,14 @@ jobs:
           curl -L -o models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
             https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
 
-      - name: Attempt AI auto-fix (OpenAI → llama fallback)
+      # Configure git so autobuilder can commit patches
+      - name: Configure git identity
+        run: |
+          git config --global user.name "ai-autobuilder"
+          git config --global user.email "ai-autobuilder@github.local"
+
+      # Run the autobuilder (OpenAI → llama fallback) with tight caps
+      - name: Attempt AI auto-fix
         if: always() && steps.build.outputs.EXIT_CODE != '0'
         env:
           PROVIDER: openai
@@ -81,10 +91,14 @@ jobs:
           RECENT_DIFF_MAX_CHARS: "2000"
         run: python3 tools/ai_autobuilder.py || true
 
-      - name: Upload APKs (optional)
+      # Upload outputs and diffs to inspect
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-apks
-          path: "**/build/outputs/**/*.apk"
-          if-no-files-found: ignore
+          name: android-build-and-ai
+          path: |
+            build.log
+            .pre_ai_fix.patch
+            **/build/outputs/**/*.apk
+          if-no-files-found: warn

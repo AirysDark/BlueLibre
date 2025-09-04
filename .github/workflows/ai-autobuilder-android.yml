@@ -28,9 +28,8 @@ jobs:
       - run: yes | sdkmanager --licenses
       - run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      # Build (explicit app module)
+      # Build (explicit :app)
       - name: Build (capture)
-      # continue even if it fails; AI step will try to fix
         id: build
         run: |
           set -euxo pipefail
@@ -42,8 +41,7 @@ jobs:
             cd android
             CMD="./gradlew :app:assembleDebug --stacktrace"
           else
-            # Fallback tries in case wrapper is nested differently
-            CMD="gradle :app:assembleDebug --stacktrace"
+            CMD="gradle -p app :app:assembleDebug --stacktrace"
           fi
           echo "BUILD_CMD=$CMD" >> "$GITHUB_OUTPUT"
           set +e; bash -lc "$CMD" | tee build.log; EXIT=$?; set -e

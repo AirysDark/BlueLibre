@@ -2,7 +2,7 @@
 import os, sys, subprocess, json, tempfile, re, pathlib, requests
 
 # -------- Config (env-overridable) --------
-PROVIDER = os.getenv("PROVIDER", "openai")              # "openai" or "llama"
+PROVIDER = os.getenv("PROVIDER", "llama")              # "openai" or "llama"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 FALLBACK_PROVIDER = os.getenv("FALLBACK_PROVIDER", "llama")

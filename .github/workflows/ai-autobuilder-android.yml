@@ -75,10 +75,10 @@ jobs:
           AI_BUILDER_ATTEMPTS: "2"
           BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}
           LLAMA_CTX: "4096"
-          MAX_PROMPT_TOKENS: "3000"
-          AI_LOG_TAIL: "120"
-          MAX_FILES_IN_TREE: "100"
-          RECENT_DIFF_MAX_CHARS: "4000"
+          MAX_PROMPT_TOKENS: "2500"
+          AI_LOG_TAIL: "80"
+          MAX_FILES_IN_TREE: "60"
+          RECENT_DIFF_MAX_CHARS: "2000"
         run: python3 tools/ai_autobuilder.py || true
 
       - name: Upload APKs (optional)

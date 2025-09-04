@@ -28,18 +28,17 @@ jobs:
       - run: yes | sdkmanager --licenses
       - run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      # Build (run in android/ if wrapper exists)
+      # Build (run from android/ if wrapper exists)
       - name: Build (capture)
         id: build
         run: |
           set -euxo pipefail
           if [ -f "android/gradlew" ]; then
-            CMD='cd android && chmod +x gradlew && ./gradlew assembleDebug --stacktrace'
-          elif [ -f "gradlew" ]; then
-            CMD='./gradlew assembleDebug --stacktrace'
+            cd android
+            chmod +x gradlew
+            CMD="./gradlew assembleDebug --stacktrace"
           else
-            # Last-resort fallback (no wrapper)
-            CMD='gradle assembleDebug --stacktrace'
+            CMD="gradle -p android assembleDebug --stacktrace"
           fi
           echo "BUILD_CMD=$CMD" >> "$GITHUB_OUTPUT"
           set +e; bash -lc "$CMD" | tee build.log; EXIT=$?; set -e
@@ -62,7 +61,6 @@ jobs:
           mkdir -p models
           curl -L -o models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
             https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
-          ls -lh models || true
 
       # Configure git so autobuilder can commit patches
       - name: Configure git identity

@@ -1,3 +1,4 @@
+# .github/workflows/AirysDark-AI_detector.yml
 name: AirysDark-AI_detector
 
 on:
@@ -12,17 +13,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        with: { fetch-depth: 0 }
 
       - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+        with: { python-version: "3.11" }
 
       - name: Install deps
         run: pip install requests pyyaml
 
-      # Always ensure tools/ has the detector + builder scripts (from AirysDark-AI org)
       - name: Ensure AirysDark-AI tools
         shell: bash
         run: |
@@ -31,8 +29,6 @@ jobs:
           BASE_URL="https://raw.githubusercontent.com/AirysDark-AI/AirysDark-AI_builder/main/tools"
           [ -f tools/AirysDark-AI_detector.py ] || curl -fL "$BASE_URL/AirysDark-AI_detector.py" -o tools/AirysDark-AI_detector.py
           [ -f tools/AirysDark-AI_builder.py ]  || curl -fL "$BASE_URL/AirysDark-AI_builder.py"  -o tools/AirysDark-AI_builder.py
-          ls -la tools
-          python3 --version
 
       - name: Generate workflows + autobuilder script
         run: python3 ./tools/AirysDark-AI_detector.py
@@ -40,6 +36,7 @@ jobs:
       - name: Create PR with generated workflows
         uses: peter-evans/create-pull-request@v6
         with:
+          token: ${{ secrets.BOT_TOKEN }}   # <-- use PAT with workflow scope
           branch: ai/airysdark-ai-bootstrap
           title: "AirysDark-AI: bootstrap (multi-purpose)"
           commit-message: "chore: generate AirysDark-AI workflows + script (multi-purpose)"

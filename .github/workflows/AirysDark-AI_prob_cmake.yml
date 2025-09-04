@@ -2,7 +2,7 @@ name: AirysDark-AI — Probe Cmake
 
 on:
   workflow_dispatch: {}
-  push: { branches: ["**"] }
+  push: "**"
 
 permissions:
   contents: write
@@ -51,7 +51,7 @@ jobs:
 
           on:
             workflow_dispatch: {}
-            push: { branches: ["**"] }
+            push: "**"
             pull_request: {}
 
           jobs:

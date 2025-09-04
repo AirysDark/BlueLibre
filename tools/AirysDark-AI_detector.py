@@ -2,7 +2,9 @@
 # AirysDark-AI_detector.py
 #
 # Scans *all files/dirs* in repo to detect build systems.
-# Adds CMake content-aware detection to also flag "linux" when the CMakeLists looks desktop-ish.
+# Adds:
+#   - CMake content-aware detection to also flag "linux" when the CMakeLists looks desktop-ish.
+#   - Folder-name hints (e.g., "linux", "android", "windows") to augment detection.
 # Writes one PROBE workflow per detected type:
 #   .github/workflows/AirysDark-AI_prob_<type>.yml
 #
@@ -40,6 +42,18 @@ def read_text_safe(p: pathlib.Path) -> str:
     except Exception:
         return ""
 
+# ---------- Helpers: folder-name hints ----------
+def collect_dir_name_hints(files):
+    """
+    Return a set of lower-cased directory names seen anywhere in the repo.
+    Includes each path segment from the file paths (not just immediate parents).
+    """
+    names = set()
+    for _, rel in files:
+        for part in pathlib.Path(rel).parts:
+            names.add(part.lower())
+    return names
+
 # ---------- CMake classifier ----------
 ANDROID_HINTS = (
     "android", "android_abi", "android_platform", "ndk", "cmake_android", "gradle", "externalnativebuild",
@@ -62,17 +76,28 @@ def detect_types():
     files = scan_all_files()
     fnames = [n for n, _ in files]
     rels   = [str(p).lower() for _, p in files]
+    dir_hints = collect_dir_name_hints(files)
 
     types = []
 
+    # Folder-name hints first (broad signals even if build files are elsewhere)
+    if "linux" in dir_hints and "linux" not in types:
+        types.append("linux")
+    if "android" in dir_hints and "android" not in types:
+        types.append("android")
+    if "windows" in dir_hints and "windows" not in types:
+        types.append("windows")
+
     # Android / Gradle
     if ("gradlew" in fnames) or any("build.gradle" in n or "settings.gradle" in n for n in fnames):
-        types.append("android")
+        if "android" not in types:
+            types.append("android")
 
     # CMake (content-aware -> may also flag linux)
     cmake_paths = [p for (n, p) in files if n == "cmakelists.txt"]
-    if cmake_paths:
+    if cmake_paths and "cmake" not in types:
         types.append("cmake")
+    if cmake_paths:
         for p in cmake_paths:
             txt = read_text_safe(p)
             if cmakelists_flavor(txt) == "desktop" and "linux" not in types:
@@ -84,41 +109,43 @@ def detect_types():
             types.append("linux")
 
     # Node
-    if "package.json" in fnames:
+    if "package.json" in fnames and "node" not in types:
         types.append("node")
     # Python
-    if "pyproject.toml" in fnames or "setup.py" in fnames:
+    if ("pyproject.toml" in fnames or "setup.py" in fnames) and "python" not in types:
         types.append("python")
     # Rust
-    if "cargo.toml" in fnames:
+    if "cargo.toml" in fnames and "rust" not in types:
         types.append("rust")
     # .NET
-    if any(r.endswith(".sln") or r.endswith(".csproj") or r.endswith(".fsproj") for r in rels):
+    if any(r.endswith(".sln") or r.endswith(".csproj") or r.endswith(".fsproj") for r in rels) and "dotnet" not in types:
         types.append("dotnet")
     # Maven
-    if "pom.xml" in fnames:
+    if "pom.xml" in fnames and "maven" not in types:
         types.append("maven")
     # Flutter
-    if "pubspec.yaml" in fnames:
+    if "pubspec.yaml" in fnames and "flutter" not in types:
         types.append("flutter")
     # Go
-    if "go.mod" in fnames:
+    if "go.mod" in fnames and "go" not in types:
         types.append("go")
     # Bazel
     if any(n in ("workspace", "workspace.bazel", "module.bazel") for n in fnames) or \
        any(os.path.basename(r) in ("build", "build.bazel") for r in rels):
-        types.append("bazel")
+        if "bazel" not in types:
+            types.append("bazel")
     # SCons
     if "sconstruct" in fnames or "sconscript" in fnames:
-        types.append("scons")
+        if "scons" not in types:
+            types.append("scons")
     # Ninja
-    if "build.ninja" in fnames:
+    if "build.ninja" in fnames and "ninja" not in types:
         types.append("ninja")
 
     if not types:
         types.append("unknown")
 
-    # de-dupe preserve order
+    # De-dupe preserve order
     seen, out = set(), []
     for t in types:
         if t not in seen:
@@ -212,7 +239,7 @@ name: AirysDark-AI — Probe __PTYPE_CAP__
 
 on:
   workflow_dispatch: {}
-  push: { branches: ["**"] }
+  push: "**"
 
 permissions:
   contents: write
@@ -261,7 +288,7 @@ __SETUP_INLINE__
 
           on:
             workflow_dispatch: {}
-            push: { branches: ["**"] }
+            push: "**"
             pull_request: {}
 
           jobs:

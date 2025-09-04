@@ -1,9 +1,9 @@
-name: AI Autobuilder — Android
+name: AI Autobuilder — Android (debug)
 
 on:
+  workflow_dispatch:
   push:
   pull_request:
-  workflow_dispatch:
 
 jobs:
   android:
@@ -13,8 +13,22 @@ jobs:
       pull-requests: write
 
     steps:
+      - name: Dump GitHub context (debug)
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "ref=${{ github.ref }}"
+          echo "sha=${{ github.sha }}"
+          echo "actor=${{ github.actor }}"
+          env | sort
+
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
+
+      - name: List workspace (debug)
+        run: |
+          pwd
+          ls -la
+          find . -maxdepth 3 -type f | sort | head -200
 
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
@@ -28,6 +42,7 @@ jobs:
 
       - name: Build (capture)
         id: build
+        shell: bash
         run: |
           set -euxo pipefail
           CANDIDATES=("android/gardle/gradlew" "android/gradlew" "gradlew")
@@ -63,6 +78,7 @@ jobs:
           mkdir -p models
           curl -L -o models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
             https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+          ls -lh models || true
 
       - name: Attempt AI auto-fix (OpenAI → llama fallback)
         if: always() && steps.build.outputs.EXIT_CODE != '0'
@@ -77,12 +93,17 @@ jobs:
           LLAMA_CTX: "4096"
           MAX_PROMPT_TOKENS: "3600"
           AI_LOG_TAIL: "200"
-        run: python3 tools/ai_autobuilder.py || true
+        run: |
+          echo "LLAMA_CPP_BIN=${LLAMA_CPP_BIN:-$(pwd)/llama.cpp/build/bin/llama-cli}"
+          python3 tools/ai_autobuilder.py || true
 
-      - name: Upload APKs (optional)
+      - name: Upload captured logs/artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-apks
-          path: "**/build/outputs/**/*.apk"
-          if-no-files-found: ignore
+          name: ai-autobuilder-debug
+          path: |
+            build.log
+            .pre_ai_fix.patch
+            **/*.apk
+          if-no-files-found: warn

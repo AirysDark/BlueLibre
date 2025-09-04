@@ -63,7 +63,7 @@ jobs:
 
             How to proceed:
             1) Merge this PR.
-            2) Run the desired "AirysDark-AI â€ Probe <Type>" workflow from Actions.
+            2) Run the desired "AirysDark-AI — Probe <Type>" workflow from Actions.
                - It will scan the entire repo, pick the correct BUILD_CMD.
                - It will then generate the final AI build workflow `.github/workflows/AirysDark-AI_<type>.yml`
                  and open a second PR with that workflow.

@@ -14,16 +14,20 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
 
       # Python for ai_autobuilder.py (HTTP client)
       - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+        with:
+          python-version: "3.11"
       - run: pip install requests
 
       # Java + Android SDK
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: "17" }
+        with:
+          distribution: temurin
+          java-version: "17"
       - uses: android-actions/setup-android@v3
       - run: yes | sdkmanager --licenses
       - run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
@@ -34,11 +38,11 @@ jobs:
         run: |
           set -euxo pipefail
           if [ -f "android/gradlew" ]; then
-            cd android
-            chmod +x gradlew
-            CMD="./gradlew assembleDebug --stacktrace"
+            CMD='cd android && chmod +x gradlew && ./gradlew assembleDebug --stacktrace'
+          elif [ -f "gradlew" ]; then
+            CMD='./gradlew assembleDebug --stacktrace'
           else
-            CMD="gradle -p android assembleDebug --stacktrace"
+            CMD='gradle assembleDebug --stacktrace'
           fi
           echo "BUILD_CMD=$CMD" >> "$GITHUB_OUTPUT"
           set +e; bash -lc "$CMD" | tee build.log; EXIT=$?; set -e
@@ -98,3 +102,36 @@ jobs:
             android/**/build/outputs/**/*.apk
             **/build/outputs/**/*.apk
           if-no-files-found: warn
+
+      # ---- NEW: Open a PR with any changes the autobuilder committed ----
+      - name: Check for changes
+        id: changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create PR with fixes
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ai/autofix-${{ github.run_id }}
+          title: "AI autobuilder: build fix"
+          body: |
+            Automated fix from AI autobuilder.
+
+            • Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            • Artifacts include build.log and any proposed patch (.pre_ai_fix.patch)
+          commit-message: "ai-autobuilder: apply automatic fix"
+          labels: |
+            autobuilder
+            bot
+          add-paths: |
+            **/*.gradle*
+            **/settings.gradle.kts
+            **/build.gradle.kts
+            tools/**
+            android/**

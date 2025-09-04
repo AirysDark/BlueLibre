@@ -1,4 +1,4 @@
-name: AI Autobuilder — Android (:app)
+name: AI Autobuilder — Android (android/assembleDebug)
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      # Needed for ai_autobuilder.py (OpenAI + HTTP)
+      # Python for ai_autobuilder.py (HTTP client)
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - run: pip install requests
@@ -28,20 +28,18 @@ jobs:
       - run: yes | sdkmanager --licenses
       - run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      # Build (explicit :app)
+      # Build (run in android/ if wrapper exists)
       - name: Build (capture)
         id: build
         run: |
           set -euxo pipefail
-          if [ -f "gradlew" ]; then
-            chmod +x gradlew
-            CMD="./gradlew :app:assembleDebug --stacktrace"
-          elif [ -f "android/gradlew" ]; then
-            chmod +x android/gradlew
-            cd android
-            CMD="./gradlew :app:assembleDebug --stacktrace"
+          if [ -f "android/gradlew" ]; then
+            CMD='cd android && chmod +x gradlew && ./gradlew assembleDebug --stacktrace'
+          elif [ -f "gradlew" ]; then
+            CMD='./gradlew assembleDebug --stacktrace'
           else
-            CMD="gradle -p app :app:assembleDebug --stacktrace"
+            # Last-resort fallback (no wrapper)
+            CMD='gradle assembleDebug --stacktrace'
           fi
           echo "BUILD_CMD=$CMD" >> "$GITHUB_OUTPUT"
           set +e; bash -lc "$CMD" | tee build.log; EXIT=$?; set -e
@@ -50,7 +48,7 @@ jobs:
           exit 0
         continue-on-error: true
 
-      # Build local fallback LLM (llama.cpp) and fetch TinyLlama
+      # Local fallback LLM (llama.cpp) + TinyLlama
       - name: Build llama.cpp (CMake, no CURL)
         run: |
           git clone --depth=1 https://github.com/ggml-org/llama.cpp
@@ -64,6 +62,7 @@ jobs:
           mkdir -p models
           curl -L -o models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
             https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+          ls -lh models || true
 
       # Configure git so autobuilder can commit patches
       - name: Configure git identity
@@ -71,7 +70,7 @@ jobs:
           git config --global user.name "ai-autobuilder"
           git config --global user.email "ai-autobuilder@github.local"
 
-      # Run the autobuilder (OpenAI → llama fallback) with tight caps
+      # Run the autobuilder (OpenAI → llama fallback) with strict caps
       - name: Attempt AI auto-fix
         if: always() && steps.build.outputs.EXIT_CODE != '0'
         env:
@@ -98,5 +97,6 @@ jobs:
           path: |
             build.log
             .pre_ai_fix.patch
+            android/**/build/outputs/**/*.apk
             **/build/outputs/**/*.apk
           if-no-files-found: warn

@@ -40,6 +40,6 @@ hiddenapibypass = { module = "org.lsposed.hiddenapibypass:hiddenapibypass", vers
 annotations = { module = "org.jetbrains:annotations", version.ref = "annotations" }
 
 [plugins]
-android.application = { id = "com.android.application",               version = "8.5.2" }
+android-application = { id = "com.android.application", version = "8.4.0" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version = "1.9.0" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version = "1.9.0" }

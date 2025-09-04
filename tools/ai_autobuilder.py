@@ -9,10 +9,10 @@ FALLBACK_PROVIDER = os.getenv("FALLBACK_PROVIDER", "llama")
 LLAMA_CPP_BIN = os.getenv("LLAMA_CPP_BIN", "llama-cli")
 LLAMA_MODEL_PATH = os.getenv("MODEL_PATH", "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
 
-# prompt / context controls for llama.cpp
+# Prompt / context controls
 LLAMA_CTX = int(os.getenv("LLAMA_CTX", "4096"))                 # llama context tokens
-MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "3000")) # keep safe headroom
-AI_LOG_TAIL = int(os.getenv("AI_LOG_TAIL", "120"))              # fewer log lines
+MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "3000")) # headroom below 4k
+AI_LOG_TAIL = int(os.getenv("AI_LOG_TAIL", "120"))              # log lines to include
 MAX_FILES_IN_TREE = int(os.getenv("MAX_FILES_IN_TREE", "100"))
 RECENT_DIFF_MAX_CHARS = int(os.getenv("RECENT_DIFF_MAX_CHARS", "4000"))
 
@@ -139,7 +139,6 @@ def _call_llama(prompt):
         "-n", "2048",
         "--temp", "0.2",
         "-c", str(LLAMA_CTX),
-        "--no-cnv",  # disable conversation template
     ]
     out = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if out.returncode != 0:

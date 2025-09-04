@@ -11,10 +11,10 @@ LLAMA_MODEL_PATH = os.getenv("MODEL_PATH", "models/tinyllama-1.1b-chat-v1.0.Q4_K
 
 # Prompt / context controls
 LLAMA_CTX = int(os.getenv("LLAMA_CTX", "4096"))                 # llama context tokens
-MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "3000")) # headroom below 4k
-AI_LOG_TAIL = int(os.getenv("AI_LOG_TAIL", "120"))              # log lines to include
-MAX_FILES_IN_TREE = int(os.getenv("MAX_FILES_IN_TREE", "100"))
-RECENT_DIFF_MAX_CHARS = int(os.getenv("RECENT_DIFF_MAX_CHARS", "4000"))
+MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "2500")) # headroom below 4k
+AI_LOG_TAIL = int(os.getenv("AI_LOG_TAIL", "80"))              # log lines to include
+MAX_FILES_IN_TREE = int(os.getenv("MAX_FILES_IN_TREE", "60"))
+RECENT_DIFF_MAX_CHARS = int(os.getenv("RECENT_DIFF_MAX_CHARS", "2000"))
 
 MAX_ATTEMPTS = int(os.getenv("AI_BUILDER_ATTEMPTS", "3"))
 BUILD_CMD = os.getenv("BUILD_CMD", "./gradlew assembleDebug --stacktrace")

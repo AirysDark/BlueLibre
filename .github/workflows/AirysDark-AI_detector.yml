@@ -1,5 +1,4 @@
-# .github/workflows/AirysDark-AI_detector.yml
-name: AirysDark-AI_detector
+name: AirysDark-AI_detector (bootstrap)
 
 on:
   workflow_dispatch:
@@ -13,10 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+        with:
+          python-version: "3.11"
 
       - name: Install deps
         run: pip install requests pyyaml
@@ -27,22 +28,49 @@ jobs:
           set -euo pipefail
           mkdir -p tools
           BASE_URL="https://raw.githubusercontent.com/AirysDark-AI/AirysDark-AI_builder/main/tools"
-          [ -f tools/AirysDark-AI_detector.py ] || curl -fL "$BASE_URL/AirysDark-AI_detector.py" -o tools/AirysDark-AI_detector.py
-          [ -f tools/AirysDark-AI_builder.py ]  || curl -fL "$BASE_URL/AirysDark-AI_builder.py"  -o tools/AirysDark-AI_builder.py
+          curl -fL "$BASE_URL/AirysDark-AI_detector.py" -o tools/AirysDark-AI_detector.py
+          # (Probe & Builder are fetched later by the generated workflows)
+          ls -la tools
 
-      - name: Generate workflows + autobuilder script
-        run: python3 ./tools/AirysDark-AI_detector.py
+      - name: Generate PROBE workflows (one per detected type)
+        id: gen
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/AirysDark-AI_detector.py
+          echo "Generated files:"
+          ls -la .github/workflows/AirysDark-AI_prob_*.yml || true
 
-      - name: Create PR with generated workflows
+      - name: Upload generated probe workflows
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: airysdark-ai-probe-workflows
+          path: .github/workflows/AirysDark-AI_prob_*.yml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Create PR with PROBE workflows
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.BOT_TOKEN }}   # <-- use PAT with workflow scope
-          branch: ai/airysdark-ai-bootstrap
-          title: "AirysDark-AI: bootstrap (multi-purpose)"
-          commit-message: "chore: generate AirysDark-AI workflows + script (multi-purpose)"
+          # Use a PAT with repo + workflow scopes for cross-repo/fork PRs
+          token: ${{ secrets.BOT_TOKEN }}
+          branch: ai/airysdark-ai-probes
+          title: "AirysDark-AI: add per-type PROBE workflows"
+          commit-message: "chore: generate AirysDark-AI_prob_<type> probe workflows"
           body: |
-            This PR was created by the bootstrap workflow.
-            - Detects project type (android / cmake / node / python / rust / dotnet / maven / flutter / go / unknown)
-            - Generates a matching CI workflow with build capture
-            - Adds AirysDark-AI autobuilder (OpenAI → llama fallback) and TinyLlama GGUF fetch
+            This PR adds one **PROBE** workflow per detected build type.
+
+            How to proceed:
+            1) Merge this PR.
+            2) In Actions, run the desired "AirysDark-AI — Probe <Type>" workflow.
+               - It will detect the exact BUILD_CMD for your repo.
+               - It will then generate the final build workflow `.github/workflows/AirysDark-AI_<type>.yml`
+                 and open a second PR with that workflow.
+            3) Merge the second PR to enable the final build+AI workflow for that type.
+
+            Notes:
+            - These probe workflows will fetch tools from the canonical repo:
+              https://github.com/AirysDark-AI/AirysDark-AI_builder/tree/main/tools
+            - Ensure you set `BOT_TOKEN` (a PAT with `repo` + `workflow` scopes) in repo Secrets.
           labels: automation, ci

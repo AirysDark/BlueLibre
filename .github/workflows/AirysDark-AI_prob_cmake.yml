@@ -1,8 +1,8 @@
-
-name: AirysDark-AI â€ Probe Cmake
+name: AirysDark-AI — Probe Cmake
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
+  push: { branches: ["**"] }
 
 permissions:
   contents: write
@@ -42,17 +42,17 @@ jobs:
       - name: Generate final workflow .github/workflows/AirysDark-AI_cmake.yml
         shell: bash
         env:
-          BUILD_CMD: "${ steps.probe.outputs.BUILD_CMD }"
+          BUILD_CMD: "${{ steps.probe.outputs.BUILD_CMD }}"
         run: |
           set -euo pipefail
           mkdir -p .github/workflows
           cat > .github/workflows/AirysDark-AI_cmake.yml <<'YAML'
-          name: AirysDark-AI â€ Cmake (generated)
+          name: AirysDark-AI — Cmake (generated)
 
           on:
-            push:
-            pull_request:
-            workflow_dispatch:
+            workflow_dispatch: {}
+            push: { branches: ["**"] }
+            pull_request: {}
 
           jobs:
             build:
@@ -99,12 +99,12 @@ jobs:
                     if-no-files-found: warn
                     retention-days: 7
 
-                # --- AI auto-fix (OpenAI â llama.cpp) ---
+                # --- AI auto-fix (OpenAI → llama.cpp) ---
                 - name: Build llama.cpp (CMake, no CURL, in temp)
-                  if: always() && steps.build.outputs.EXIT_CODE != '0'
+                  if: always() && ${{ steps.build.outputs.EXIT_CODE }} != '0'
                   run: |
                     set -euxo pipefail
-                    TMP="${ runner.temp }"
+                    TMP="${{ runner.temp }}"
                     cd "$TMP"
                     rm -rf llama.cpp
                     git clone --depth=1 https://github.com/ggml-org/llama.cpp
@@ -114,22 +114,22 @@ jobs:
                     echo "LLAMA_CPP_BIN=$PWD/build/bin/llama-cli" >> $GITHUB_ENV
 
                 - name: Fetch GGUF model (TinyLlama)
-                  if: always() && steps.build.outputs.EXIT_CODE != '0'
+                  if: always() && ${{ steps.build.outputs.EXIT_CODE }} != '0'
                   run: |
                     mkdir -p models
                     curl -L -o models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
                       https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
 
-                - name: Attempt AI auto-fix (OpenAI â llama fallback)
-                  if: always() && steps.build.outputs.EXIT_CODE != '0'
+                - name: Attempt AI auto-fix (OpenAI → llama fallback)
+                  if: always() && ${{ steps.build.outputs.EXIT_CODE }} != '0'
                   env:
                     PROVIDER: openai
                     FALLBACK_PROVIDER: llama
-                    OPENAI_API_KEY: ${ secrets.OPENAI_API_KEY }
-                    OPENAI_MODEL: ${ vars.OPENAI_MODEL || 'gpt-4o-mini' }
+                    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+                    OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
                     MODEL_PATH: models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
                     AI_BUILDER_ATTEMPTS: "3"
-                    BUILD_CMD: ${ steps.build.outputs.BUILD_CMD }
+                    BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}
                   run: python3 tools/AirysDark-AI_builder.py || true
 
                 - name: Upload AI patch (if any)
@@ -140,32 +140,6 @@ jobs:
                     path: .pre_ai_fix.patch
                     if-no-files-found: ignore
                     retention-days: 7
-
-                - name: Upload build artifacts
-                  if: always()
-                  uses: actions/upload-artifact@v4
-                  with:
-                    name: cmake-artifacts
-                    if-no-files-found: ignore
-                    retention-days: 7
-                    path: |
-                      build/**
-                      out/**
-                      dist/**
-                      target/**
-                      **/build/**
-                      **/out/**
-                      **/dist/**
-                      **/target/**
-                      **/*.so
-                      **/*.a
-                      **/*.dll
-                      **/*.dylib
-                      **/*.exe
-                      **/*.bin
-                      **/outputs/**/*.apk
-                      **/outputs/**/*.aab
-                      **/*.whl
 
                 - name: Check for changes
                   id: diff
@@ -178,16 +152,16 @@ jobs:
                     fi
 
                 - name: Create PR with AI fixes
-                  if: steps.diff.outputs.changed == 'true'
+                  if: ${{ steps.diff.outputs.changed }} == 'true'
                   uses: peter-evans/create-pull-request@v6
                   with:
-                    token: ${ secrets.BOT_TOKEN }
+                    token: ${{ secrets.BOT_TOKEN }}
                     branch: ai/airysdark-ai-autofix-cmake
                     commit-message: "chore: AirysDark-AI auto-fix (cmake)"
                     title: "AirysDark-AI: automated build fix (cmake)"
                     body: |
                       This PR was opened automatically by a generated workflow after a failed build.
-                      - Build command: ${ steps.build.outputs.BUILD_CMD }
+                      - Build command: ${{ steps.build.outputs.BUILD_CMD }}
                       - Captured the failing build log
                       - Proposed a minimal fix via AI
                       - Committed the changes for review
@@ -197,12 +171,12 @@ jobs:
       - name: Create PR with generated final workflow
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${ secrets.BOT_TOKEN }
+          token: ${{ secrets.BOT_TOKEN }}
           branch: ai/airysdark-ai-workflow-cmake
           commit-message: "chore: add AirysDark-AI_cmake workflow (probed)"
           title: "AirysDark-AI: add cmake workflow (from probe)"
           body: |
             This PR adds the final cmake AI build workflow, generated by the probe run.
-            - Probed command: ${ steps.probe.outputs.BUILD_CMD }
-            - Next: merge this PR, then run **AirysDark-AI â€ Cmake (generated)**
+            - Probed command: ${{ steps.probe.outputs.BUILD_CMD }}
+            - Next: merge this PR, then run “AirysDark-AI — Cmake (generated)”
           labels: automation, ci

@@ -22,16 +22,17 @@ jobs:
       - name: Install deps
         run: pip install requests pyyaml
 
-      # Always ensure tools/ has the detector + builder scripts
+      # Always ensure tools/ has the detector + builder scripts (from AirysDark-AI org)
       - name: Ensure AirysDark-AI tools
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p tools
-          BASE_URL="https://raw.githubusercontent.com/AirysDark/AirysDark-AI_Builder/main/tools"
+          BASE_URL="https://raw.githubusercontent.com/AirysDark-AI/AirysDark-AI_builder/main/tools"
           [ -f tools/AirysDark-AI_detector.py ] || curl -fL "$BASE_URL/AirysDark-AI_detector.py" -o tools/AirysDark-AI_detector.py
           [ -f tools/AirysDark-AI_builder.py ]  || curl -fL "$BASE_URL/AirysDark-AI_builder.py"  -o tools/AirysDark-AI_builder.py
           ls -la tools
+          python3 --version
 
       - name: Generate workflows + autobuilder script
         run: python3 ./tools/AirysDark-AI_detector.py

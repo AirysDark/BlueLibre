@@ -10,12 +10,11 @@ LLAMA_CPP_BIN = os.getenv("LLAMA_CPP_BIN", "llama-cli")
 LLAMA_MODEL_PATH = os.getenv("MODEL_PATH", "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
 
 # prompt / context controls for llama.cpp
-LLAMA_CTX = int(os.getenv("LLAMA_CTX", "4096"))         # llama context tokens
-MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "3600"))  # keep headroom for output
-AI_LOG_TAIL = int(os.getenv("AI_LOG_TAIL", "200"))      # lines of build.log to include
-
-MAX_FILES_IN_TREE = int(os.getenv("MAX_FILES_IN_TREE", "160"))
-RECENT_DIFF_MAX_CHARS = int(os.getenv("RECENT_DIFF_MAX_CHARS", "6000"))
+LLAMA_CTX = int(os.getenv("LLAMA_CTX", "4096"))                 # llama context tokens
+MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "3000")) # keep safe headroom
+AI_LOG_TAIL = int(os.getenv("AI_LOG_TAIL", "120"))              # fewer log lines
+MAX_FILES_IN_TREE = int(os.getenv("MAX_FILES_IN_TREE", "100"))
+RECENT_DIFF_MAX_CHARS = int(os.getenv("RECENT_DIFF_MAX_CHARS", "4000"))
 
 MAX_ATTEMPTS = int(os.getenv("AI_BUILDER_ATTEMPTS", "3"))
 BUILD_CMD = os.getenv("BUILD_CMD", "./gradlew assembleDebug --stacktrace")
@@ -79,16 +78,13 @@ def tail_build_log(lines=None):
     return "\n".join(data[-int(lines):])
 
 def truncate_prompt(p: str, max_tokens=MAX_PROMPT_TOKENS):
-    """
-    Heuristic truncation by characters (~4 chars/token). Keeps head & tail.
-    """
+    # crude approximation: 1 token ≈ 4 chars
     char_limit = max_tokens * 4
     if len(p) <= char_limit:
         return p
     head = p[: int(char_limit * 0.60)]
     tail = p[- int(char_limit * 0.35):]
-    note = "\n\n[...prompt truncated to fit model context...]\n\n"
-    return head + note + tail
+    return head + "\n\n[...prompt truncated to fit context...]\n\n" + tail
 
 def run_build():
     with open("build.log", "wb") as f:
@@ -103,8 +99,7 @@ def run_build():
 def _call_openai(prompt):
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
-        # keep the same shape used in earlier logs for fallback detection
-        raise RuntimeError('openai_error:{"error":{"message":"OPENAI_API_KEY missing"}}')
+        raise RuntimeError("openai_error: missing OPENAI_API_KEY")
 
     url = "https://api.openai.com/v1/chat/completions"
     payload = {
@@ -133,7 +128,7 @@ def _call_openai(prompt):
 def _call_llama(prompt):
     mp = pathlib.Path(LLAMA_MODEL_PATH)
     if not mp.exists():
-        print(f"llama.cpp: MODEL_PATH not found: {mp}. Provide a GGUF model or set MODEL_PATH env.")
+        print(f"llama.cpp: MODEL_PATH not found: {mp}")
         raise RuntimeError("llama_failed")
 
     safe_prompt = truncate_prompt(prompt)
@@ -144,6 +139,7 @@ def _call_llama(prompt):
         "-n", "2048",
         "--temp", "0.2",
         "-c", str(LLAMA_CTX),
+        "--no-cnv",  # disable conversation template
     ]
     out = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if out.returncode != 0:
@@ -156,7 +152,6 @@ def call_llm(prompt):
         try:
             return _call_openai(prompt)
         except RuntimeError as e:
-            # explicit fallback on openai error (e.g., insufficient_quota)
             if "openai_error" in str(e) and FALLBACK_PROVIDER == "llama":
                 print("⚠️ OpenAI failed (quota or request). Falling back to llama.cpp…")
                 return _call_llama(prompt)
@@ -171,8 +166,7 @@ def extract_unified_diff(text):
     m = re.search(r'(?ms)^--- [^\n]+\n\+\+\+ [^\n]+\n', text)
     if not m:
         return None
-    start = m.start()
-    return text[start:].strip()
+    return text[m.start():].strip()
 
 def apply_patch(diff_text):
     tmp = tempfile.NamedTemporaryFile("w", delete=False, suffix=".patch")
@@ -193,7 +187,7 @@ def apply_patch(diff_text):
 
 # -------- main --------
 def main():
-    print("== AI Autobuilder (multi-purpose; OpenAI → llama fallback) ==")
+    print("== AI Autobuilder (OpenAI → llama fallback) ==")
     print("Project:", PROJECT_ROOT)
     print(f"Provider: {PROVIDER}, Model: {OPENAI_MODEL}, Fallback: {FALLBACK_PROVIDER}")
     if not (PROJECT_ROOT / ".git").exists():
@@ -208,10 +202,8 @@ def main():
         print("✅ Build already succeeds. Nothing to do.")
         return 0
 
-    attempts = 0
-    while attempts < MAX_ATTEMPTS:
-        attempts += 1
-        print(f"\n== Attempt {attempts}/{MAX_ATTEMPTS} ==")
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        print(f"\n== Attempt {attempt}/{MAX_ATTEMPTS} ==")
         prompt = PROMPT.format(
             repo_tree=get_repo_tree(),
             recent_diff=get_recent_diff(),
@@ -222,7 +214,7 @@ def main():
         llm_out = call_llm(prompt)
         diff = extract_unified_diff(llm_out)
         if not diff:
-            print("LLM did not return a unified diff. Aborting this attempt.")
+            print("LLM did not return a unified diff. Aborting.")
             break
 
         print("\n--- Proposed diff (truncated) ---\n")
@@ -239,7 +231,6 @@ def main():
             return 0
 
     print("❌ Still failing after attempts.")
-    print("Check build.log and .pre_ai_fix.patch to revert:  git apply -R .pre_ai_fix.patch")
     return 1
 
 if __name__ == "__main__":

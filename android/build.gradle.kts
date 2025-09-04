@@ -1,23 +1,21 @@
 plugins {
-    alias(cat.plugins.android.application) apply false
-    alias(cat.plugins.kotlin.android)      apply false
-    alias(cat.plugins.kotlin.compose)      apply false
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
 }
 
-tasks.register<Delete>("clean") {
-    delete(rootProject.buildDir)
+android {
+    buildFeatures { compose = true }
+    // With Kotlin 2.x, you can usually omit the compiler extension version;
+    // if you need to pin it, add composeOptions with a matching version.
+    // composeOptions { kotlinCompilerExtensionVersion = "1.6.x" }
 }
 
-buildscript {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
+dependencies {
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.ui.graphics)
+    implementation(libs.androidx.ui.tooling.preview)
+    implementation(libs.androidx.material3)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.navigation.compose)
 }

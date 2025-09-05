@@ -1,8 +1,8 @@
 ### AirysDark-AI: detector results
 
 **Detected build types:**
-- android
 - linux
+- android
 - cmake
 
 **Next steps:**

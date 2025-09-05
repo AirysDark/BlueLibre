@@ -10,7 +10,6 @@ permissions:
 jobs:
   detect:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout (no credentials)
         uses: actions/checkout@v4
@@ -23,12 +22,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Fetch once here ONLY (per your design). The generated probe workflow will NOT fetch tools again.
       - name: Fetch tools.tar (ONLY here)
         run: |
           set -euxo pipefail
           mkdir -p tools
-          curl -fL "https://raw.githubusercontent.com/AirysDark-AI/AirysDark-AI_builder/main/tools/tools.tar" -o /tmp/tools.tar
+          curl -fL https://raw.githubusercontent.com/AirysDark-AI/AirysDark-AI_builder/main/tools/tools.tar -o /tmp/tools.tar
           tar -xvf /tmp/tools.tar -C tools
           ls -la tools
 
@@ -44,12 +42,14 @@ jobs:
           echo "" >> pr_body.md
           if [ -f tools/airysdark_ai_scan.json ]; then
             echo "**Detected build types:**" >> pr_body.md
-            python3 - <<'PY' >> pr_body.md
-import json
-from pathlib import Path
-p = Path("tools/airysdark_ai_scan.json")
-j = json.loads(p.read_text(errors="ignore")) if p.exists() else {}
-types = j.get("types", [])
+            python3 - "$PWD/tools/airysdark_ai_scan.json" >> pr_body.md <<'PY'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+try:
+    j = json.loads(p.read_text(errors="ignore"))
+    types = j.get("types", [])
+except Exception:
+    types = []
 if types:
     for t in types:
         print(f"- {t}")
@@ -61,9 +61,9 @@ PY
           fi
           echo "" >> pr_body.md
           echo "**Next steps:**" >> pr_body.md
-          echo "1. Edit \`.github/workflows/AirysDark-AI_prob.yml\` and set **env.TARGET** to the build you want (e.g. \`android\`, \`linux\`, \`cmake\`)." >> pr_body.md
+          echo "1. Edit .github/workflows/AirysDark-AI_prob.yml and set env.TARGET to the build you want (e.g. android, linux, cmake)." >> pr_body.md
           echo "2. Merge this PR." >> pr_body.md
-          echo "3. Manually run the workflow **AirysDark-AI - Probe (LLM builds workflow)** from the Actions tab." >> pr_body.md
+          echo "3. Manually run the workflow 'AirysDark-AI - Probe (LLM builds workflow)' from the Actions tab." >> pr_body.md
 
       - name: Stage detector outputs
         id: diff
@@ -72,18 +72,17 @@ PY
           git add -A
           if git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-          else:
+          else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Use your Fine-grained PAT stored as BOT_TOKEN
       - name: Open PR with PROB workflow
         if: steps.diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.BOT_TOKEN }}
           branch: ai/airysdark-ai-prob
-          commit-message: "chore: add AirysDark-AI_prob.yml + tools (bootstrap)"
-          title: "AirysDark-AI: add single PROB workflow + tools"
+          commit-message: chore: add AirysDark-AI_prob.yml + tools (bootstrap)
+          title: AirysDark-AI: add single PROB workflow + tools
           body-path: pr_body.md
           labels: automation, ci

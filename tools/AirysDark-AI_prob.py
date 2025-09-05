@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
 """
 AirysDark-AI_prob.py — Step 2 (Probe)
-
-What it does
-------------
-- Reads detector output (tools/airysdark_ai_scan.json)
-- Recursively scans the repo (all folders) and collects a snapshot + textual hints
+- Reads detector results (tools/airysdark_ai_scan.json)
+- Recursively scans the repo for structure and textual hints
 - Proposes a build command for env TARGET
-- Generates a manual-run workflow `.github/workflows/AirysDark-AI_build.yml`
-  - If OPENAI_API_KEY is set, asks OpenAI to draft the workflow, else uses a robust template
+- Drafts a build workflow via OpenAI (if key available) or a validated fallback
 - Writes:
     tools/airysdark_ai_prob_report.json
     tools/airysdark_ai_prob_report.log
-    tools/airysdark_ai_build_ai_response.txt   (only if AI used)
-    .github/workflows/AirysDark-AI_build.yml
-    pr_body_build.md                           (for create-pull-request step)
+    tools/airysdark_ai_build_ai_response.txt   (if AI used)
+    .github/workflows/AirysDark-AI_build.yml   (manual trigger)
+    pr_body_build.md                           (for the PR body)
 """
 
 import os
@@ -49,7 +45,7 @@ def read_scan_json():
 
 def repo_snapshot(max_files=6000, max_text_lines=80):
     """
-    Walk entire repo (except .git), list files, and capture heads of many text/code files.
+    Walk entire repo (except .git), list files, and capture heads of common text/code files.
     """
     files = []
     doc_hints = {}
@@ -82,6 +78,12 @@ def repo_snapshot(max_files=6000, max_text_lines=80):
             break
     return {"files": files, "doc_hints": doc_hints}
 
+def exists_any(globs):
+    for g in globs:
+        if list(ROOT.glob(g)):
+            return True
+    return False
+
 def find_first(globs):
     for g in globs:
         found = list(ROOT.glob(g))
@@ -96,8 +98,7 @@ def guess_android_cmd():
     wrappers = [w for w in wrappers if w.exists()]
     if not wrappers:
         return "./gradlew assembleDebug --stacktrace"
-    # prefer the shortest path (closest to root) to avoid nested sample projects
-    g = sorted(wrappers, key=lambda p: len(str(p)))[0]
+    g = sorted(wrappers, key=lambda p: len(str(p))) [0]  # prefer nearest
     gradle_dir = g.parent
 
     # Try to parse settings for modules
@@ -106,17 +107,17 @@ def guess_android_cmd():
         sp = gradle_dir / sname
         if sp.exists():
             txt = sp.read_text(errors="ignore")
-            incs = re.findall(r'include\s*\((.*?)\)', txt, flags=re.S | re.I)
+            incs = re.findall(r'include\s*\((.*?)\)', txt, flags=re.S|re.I)
             for raw in incs:
                 parts = [p.strip(" '\"\t") for p in re.split(r'[,\s]+', raw.strip()) if p.strip()]
                 for p in parts:
                     if p.startswith(":"):
                         mods.append(p[1:])
-    # Prefer common app modules
+    # Prefer common modules
     for m in mods:
-        if m in ("app", "mobile", "android"):
+        if m in ("app","mobile","android"):
             return f'cd "{gradle_dir}" && ./gradlew :{m}:assembleDebug --stacktrace'
-    # Fallback to assembleDebug at wrapper dir
+    # Fall back to assembleDebug at wrapper dir
     return f'cd "{gradle_dir}" && ./gradlew assembleDebug --stacktrace'
 
 def guess_cmake_cmd():
@@ -130,26 +131,26 @@ def guess_cmake_cmd():
     return "echo 'No CMakeLists.txt found' && exit 1"
 
 def guess_linux_cmd():
-    mk = find_first(["Makefile", "**/Makefile", "**/GNUmakefile"])
+    mk = find_first(["Makefile","**/Makefile","**/GNUmakefile"])
     if mk:
         return f'make -C "{mk.parent}" -j'
-    mb = find_first(["meson.build", "**/meson.build"])
+    mb = find_first(["meson.build","**/meson.build"])
     if mb:
         d = mb.parent
         return f'(cd "{d}" && (meson setup build --wipe || true); meson setup build || true; ninja -C build)'
-    nb = find_first(["build.ninja", "**/build.ninja"])
+    nb = find_first(["build.ninja","**/build.ninja"])
     if nb:
         return f'(cd "{nb.parent}" && ninja)'
     return "echo 'No Linux build files found' && exit 1"
 
 def guess_node_cmd():
-    pkg = find_first(["package.json", "**/package.json"])
+    pkg = find_first(["package.json","**/package.json"])
     if pkg:
         return f'cd "{pkg.parent}" && npm ci && npm run build --if-present'
     return "echo 'No package.json found' && exit 1"
 
 def guess_python_cmd():
-    pj = find_first(["pyproject.toml", "**/pyproject.toml", "setup.py", "**/setup.py"])
+    pj = find_first(["pyproject.toml","**/pyproject.toml","setup.py","**/setup.py"])
     if pj:
         return f'cd "{pj.parent}" && pip install -e . && (pytest || python -m pytest || true)'
     return "echo 'No python project found' && exit 1"
@@ -186,7 +187,7 @@ def propose_build_cmd(target: str) -> str:
 
 # ---------------- Setup steps for build workflow ----------------
 
-def setup_steps_yaml(ptype: str) -> str:
+def setup_steps_yaml(ptype:str) -> str:
     if ptype == "android":
         return textwrap.dedent("""\
           - uses: actions/setup-java@v4
@@ -249,7 +250,7 @@ def setup_steps_yaml(ptype: str) -> str:
 
 # ---------------- Build workflow generation ----------------
 
-def render_build_workflow(target: str, build_cmd: str) -> str:
+def render_build_workflow(target:str, build_cmd:str) -> str:
     setup = setup_steps_yaml(target)
     # Use placeholders to avoid interfering with ${{ }} in YAML
     tmpl = r"""
@@ -377,7 +378,8 @@ __SETUP__
             - Proposed a minimal fix via AI
             - Committed the changes for review
           labels: "automation, ci"
-""".lstrip("\n")
+"""
+    ).lstrip("\n")
 
     setup_block = ""
     if setup.strip():
@@ -405,10 +407,10 @@ def call_openai(prompt: str) -> str:
         json={
             "model": model,
             "messages": [
-                {"role": "system", "content": "You are a CI assistant. Return only a valid GitHub Actions YAML workflow."},
-                {"role": "user", "content": prompt},
+                {"role":"system","content":"You are a CI assistant. Return only a valid GitHub Actions YAML workflow."},
+                {"role":"user","content": prompt}
             ],
-            "temperature": 0.2,
+            "temperature": 0.2
         },
         timeout=180,
     )
@@ -509,10 +511,6 @@ def main():
     body.append(f"- AI drafted workflow: {'yes' if used_ai else 'no (template fallback)'}")
     PR_BODY.write_text("\n".join(body) + "\n", encoding="utf-8")
 
-    # 7) Make sure there is a change for the PR step to commit (safe + idempotent)
-    (TOOLS / ".ai_probe_touch").write_text(str(__import__("time").time()))
-
-    # Do NOT commit here; the workflow's create-pull-request step will commit & open the PR
     print("✅ Probe complete")
     print(f"  Target: {target}")
     print(f"  Build cmd: {build_cmd}")

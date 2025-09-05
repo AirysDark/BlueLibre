@@ -1,0 +1,49 @@
+name: AirysDark-AI - Build (android)
+
+on:
+  workflow_dispatch: {}  # manual only
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Install basics (best-effort)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl ca-certificates
+
+      - name: Build (android)
+        run: bash -lc './gradlew assembleDebug --stacktrace'
+
+      - name: Upload outputs (best-effort)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-outputs
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            build/**
+            out/**
+            dist/**
+            target/**
+            **/build/**
+            **/out/**
+            **/dist/**
+            **/target/**
+            **/*.so
+            **/*.a
+            **/*.dll
+            **/*.dylib
+            **/*.exe
+            **/*.whl
+            **/outputs/**/*.apk
+            **/outputs/**/*.aab

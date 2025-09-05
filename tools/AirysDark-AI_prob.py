@@ -572,6 +572,9 @@ permissions:
 env:
   # Optional central KB repo; leave blank to skip
   KB_COLLECTION_REPO: "AirysDark-AI/ai-kb-collection"
+  # on  = run AirysDark-AI_android.py (self-contained Android logic)
+  # off = skip android.py and use AirysDark-AI_builder.py instead
+  ANDROID_LOGIC: "on"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -614,6 +617,68 @@ jobs:
           test -f tools/AirysDark-AI_android.py
           test -f tools/AirysDark-AI_builder.py || true
           ls -la tools
+
+- name: Android strategy
+        run: echo "ANDROID_LOGIC=${{ env.ANDROID_LOGIC }}"
+
+      # ---------- ANDROID LOGIC: ON (uses AirysDark-AI_android.py) ----------
+      - name: Run Android AI loop
+        if: ${{ env.ANDROID_LOGIC == 'on' }}
+        id: android_run
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+          AI_BUILDER_ATTEMPTS: "3"
+          AI_LOG_TAIL: "160"
+        run: |
+          set -euxo pipefail
+          python3 tools/AirysDark-AI_android.py --mode run | tee /tmp/android.out
+          # (optional) forward any discovered command
+          if grep -q '^BUILD_CMD=' /tmp/android.out; then
+            CMD=$(grep -E '^BUILD_CMD=' /tmp/android.out | sed 's/^BUILD_CMD=//')
+            echo "BUILD_CMD=$CMD" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---------- ANDROID LOGIC: OFF (uses AirysDark-AI_builder.py) ----------
+      - name: Determine Gradle build command
+        if: ${{ env.ANDROID_LOGIC == 'off' }}
+        id: plan
+        shell: bash
+        run: |
+          set -euxo pipefail
+          CMD=""
+          if [ -x ./gradlew ]; then
+            CMD="./gradlew assembleDebug --stacktrace"
+          else
+            F=$(git ls-files '**/gradlew' | head -n1 || true)
+            if [ -n "$F" ]; then
+              cd "$(dirname "$F")"
+              CMD="./gradlew assembleDebug --stacktrace"
+            fi
+          fi
+          echo "BUILD_CMD=$CMD"
+          echo "BUILD_CMD=$CMD" >> "$GITHUB_OUTPUT"
+
+      - name: Build (capture)
+        if: ${{ env.ANDROID_LOGIC == 'off' }}
+        id: build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          CMD="${{ steps.plan.outputs.BUILD_CMD }}"
+          [ -n "$CMD" ] || { echo "No build command found"; exit 1; }
+          set +e; bash -lc "$CMD" | tee build.log; EXIT=$?; set -e
+          echo "EXIT_CODE=$EXIT" >> "$GITHUB_OUTPUT"
+          exit 0
+        continue-on-error: true
+
+      - name: Attempt AI auto-fix with builder.py
+        if: ${{ env.ANDROID_LOGIC == 'off' && steps.build.outputs.EXIT_CODE != '0' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+          BUILD_CMD: ${{ steps.plan.outputs.BUILD_CMD }}
+        run: python3 tools/AirysDark-AI_builder.py || true
 
       - name: Run Android AI loop
         id: run

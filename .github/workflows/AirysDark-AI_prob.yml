@@ -7,7 +7,7 @@ permissions:
   contents: write
   pull-requests: write
 
-# IMPORTANT: set TARGET to one of your detected types (e.g. android, linux, cmake, node, python, rust, dotnet, maven, flutter, go)
+# Set TARGET to one of the detected types (android, linux, cmake, node, python, rust, dotnet, maven, flutter, go)
 env:
   TARGET: "android"
 
@@ -44,7 +44,7 @@ jobs:
       - name: Run repo probe (AI-assisted)
         env:
           TARGET: ${{ env.TARGET }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}   # optional; falls back to heuristic if not set
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}   # optional
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
         run: |
           set -euxo pipefail

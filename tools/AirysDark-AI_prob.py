@@ -379,7 +379,7 @@ __SETUP__
             - Committed the changes for review
           labels: "automation, ci"
 """
-    ).lstrip("\n")
+    """.lstrip("\n")
 
     setup_block = ""
     if setup.strip():

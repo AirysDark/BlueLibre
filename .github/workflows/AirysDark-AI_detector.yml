@@ -33,52 +33,15 @@ jobs:
           tar -xvf /tmp/tools.tar -C tools
           ls -la tools
 
-      - name: Run detector (writes scan.json + AirysDark-AI_prob.yml)
+      - name: Run detector (writes scan.json + AirysDark-AI_prob.yml + pr_body_detect.md)
         shell: bash
         run: |
           set -euxo pipefail
           python3 tools/AirysDark-AI_detector.py
+          # sanity checks
           test -f tools/airysdark_ai_scan.json
           test -f .github/workflows/AirysDark-AI_prob.yml
-
-      - name: Build PR body (detector results)
-        id: body
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-import json, pathlib
-p = pathlib.Path("tools/airysdark_ai_scan.json")
-scan = {}
-if p.exists():
-    try:
-        scan = json.loads(p.read_text(encoding="utf-8", errors="ignore"))
-    except Exception:
-        scan = {}
-lines = []
-lines.append("### AirysDark-AI: detector results")
-lines.append("")
-types = scan.get("types", [])
-evid  = scan.get("evidence", {})
-if p.exists():
-    if types:
-        lines.append("**Detected build types:**")
-        for t in types:
-            lines.append(f"- {t}")
-            for ev in (evid.get(t, [])[:6] or []):
-                lines.append(f"  - {ev}")
-    else:
-        lines.append("_No build types detected._")
-else:
-    lines.append("_No detector JSON found (tools/airysdark_ai_scan.json)._)")
-lines.append("")
-lines.append("**Next steps:**")
-lines.append("1. Edit `.github/workflows/AirysDark-AI_prob.yml` and set `env.TARGET` to the build you want (e.g. `android`, `linux`, `cmake`).")
-lines.append("2. Merge this PR.")
-lines.append("3. From the Actions tab, manually run **AirysDark-AI - Probe (LLM builds workflow)**.")
-pathlib.Path("pr_body.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-PY
-          echo "PR_BODY_PATH=pr_body.md" >> "$GITHUB_OUTPUT"
+          test -f pr_body_detect.md
 
       - name: Stage detector outputs
         id: diff
@@ -101,5 +64,5 @@ PY
           branch: ai/airysdark-ai-prob
           commit-message: "chore: add AirysDark-AI_prob.yml + tools (bootstrap)"
           title: "AirysDark-AI: add single PROBE workflow + tools"
-          body-path: ${{ steps.body.outputs.PR_BODY_PATH }}
-          labels: "automation, ci"
+          body-path: pr_body_detect.md
+          labels: automation, ci

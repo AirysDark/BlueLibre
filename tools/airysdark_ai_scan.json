@@ -1,0 +1,114 @@
+{
+  "timestamp": "2025-09-05T08:36:38.742830Z",
+  "types": [
+    "android",
+    "linux",
+    "cmake"
+  ],
+  "hits": {
+    "android_gradle": [
+      "android/settings.gradle.kts",
+      "android/build.gradle.kts",
+      "android/app/build.gradle.kts",
+      "folder-hint:android"
+    ],
+    "cmakelists": [
+      "CMakeLists.txt",
+      "linux/CMakeLists.txt",
+      "android/app/src/main/cpp/CMakeLists.txt"
+    ],
+    "make_like": [
+      "folder-hint:linux"
+    ],
+    "node": [],
+    "python": [],
+    "rust": [],
+    "dotnet": [],
+    "maven": [],
+    "flutter": [],
+    "go": [],
+    "bazel": [],
+    "scons": [],
+    "ninja": []
+  },
+  "cmake_flavors": [
+    {
+      "path": "CMakeLists.txt",
+      "flavor": "desktop"
+    },
+    {
+      "path": "linux/CMakeLists.txt",
+      "flavor": "desktop"
+    },
+    {
+      "path": "android/app/src/main/cpp/CMakeLists.txt",
+      "flavor": "desktop"
+    }
+  ],
+  "folder_hints": [
+    ".github",
+    "airpods",
+    "android",
+    "app",
+    "assets",
+    "ble",
+    "com",
+    "composables",
+    "constants",
+    "cpp",
+    "docs",
+    "drawable",
+    "drawable-nodpi",
+    "drawable-v21",
+    "drawable-v24",
+    "font",
+    "fonts",
+    "gradle",
+    "head-tracking",
+    "imgs",
+    "include",
+    "java",
+    "kavishdevar",
+    "layout",
+    "librepods",
+    "libs",
+    "linux",
+    "main",
+    "me",
+    "media",
+    "meta-inf",
+    "mipmap-anydpi-v26",
+    "mipmap-hdpi",
+    "mipmap-mdpi",
+    "mipmap-xhdpi",
+    "mipmap-xxhdpi",
+    "mipmap-xxxhdpi",
+    "models",
+    "packaging",
+    "qr-code-generator",
+    "raw",
+    "raw-night",
+    "receivers",
+    "res",
+    "resources",
+    "screens",
+    "services",
+    "src",
+    "theme",
+    "thirdparty",
+    "tools",
+    "ui",
+    "utils",
+    "values",
+    "values-night",
+    "values-night-v31",
+    "values-v21",
+    "values-v31",
+    "widgets",
+    "workflows",
+    "wrapper",
+    "xml",
+    "xposed",
+    "yourco"
+  ]
+}

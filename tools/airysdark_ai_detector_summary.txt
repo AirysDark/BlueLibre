@@ -1,0 +1,6 @@
+[2025-09-05T08:36:38.742830Z] AirysDark-AI detector scan
+Detected build types: android, linux, cmake
+
+- Android Gradle files: 4
+- CMake files: 3
+- Make/Meson/Ninja signals: 1

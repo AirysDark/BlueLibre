@@ -1,0 +1,87 @@
+name: AirysDark-AI - Probe (LLM builds workflow)
+
+on:
+  workflow_dispatch: {}  # manual only
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# IMPORTANT: set TARGET to one of: android, linux, cmake
+env:
+  TARGET: "__SET_ME__"  # e.g. android / linux / cmake / node / python / ...
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (no credentials)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Guard: ensure TARGET is set
+        run: |
+          if [ "${{ env.TARGET }}" = "__SET_ME__" ]; then
+            echo "TARGET is not set. Edit this workflow to set env.TARGET (e.g. android) and run again."
+            exit 1
+          fi
+          echo "TARGET=${{ env.TARGET }}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify tools exist (added by detector PR)
+        run: |
+          set -euxo pipefail
+          test -f tools/AirysDark-AI_prob.py
+          test -f tools/AirysDark-AI_builder.py
+          ls -la tools
+
+      - name: Run repo probe (AI-assisted)
+        env:
+          TARGET: ${{ env.TARGET }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}   # optional; falls back to heuristic if absent
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+        run: |
+          set -euxo pipefail
+          python3 tools/AirysDark-AI_prob.py
+
+      - name: Upload probe artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: airysdark-ai-probe-artifacts
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            tools/airysdark_ai_prob_report.json
+            tools/airysdark_ai_prob_report.log
+            tools/airysdark_ai_build_ai_response.txt
+            pr_body_build.md
+            .github/workflows/AirysDark-AI_build.yml
+
+      - name: Stage generated build workflow
+        id: diff
+        run: |
+          set -euxo pipefail
+          git add -A
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open PR with generated build workflow
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.BOT_TOKEN }}   # Fine-grained PAT: contents+pull-requests on this repo
+          branch: ai/airysdark-ai-build
+          commit-message: "chore: add AirysDark-AI_build.yml (from probe)"
+          title: "AirysDark-AI: add build workflow (from probe)"
+          body-path: pr_body_build.md
+          labels: automation, ci

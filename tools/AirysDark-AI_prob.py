@@ -7,22 +7,30 @@ What it does
 - Reads detector output (tools/airysdark_ai_scan.json)
 - Recursively scans the repo (all folders) and collects a snapshot + textual hints
 - Proposes a build command for env TARGET
-- Generates a manual-run workflow `.github/workflows/AirysDark-AI_build.yml`
-  - If OPENAI_API_KEY is set, asks OpenAI to draft the workflow, else uses a robust template
+- If TARGET=android:
+    • run an extra Android probe (gradle wrapper(s), modules from settings.gradle(.kts),
+      best-effort gradle task sampling) and emit an Android-only workflow that calls
+      tools/AirysDark-AI_android.py (self-contained loop; no extra fetching)
+- Otherwise:
+    • Generates a manual-run workflow `.github/workflows/AirysDark-AI_build.yml`
+      - If OPENAI_API_KEY is set, asks OpenAI to draft the workflow, else uses a robust template
 - Writes:
     tools/airysdark_ai_prob_report.json
-    tools/airysdark_ai_prob_report.log
-    tools/airysdark_ai_build_ai_response.txt   (only if AI used)
-    .github/workflows/AirysDark-AI_build.yml
-    pr_body_build.md                           (for create-pull-request step)
+    tools/airysdark_ai_prob_report.log          (append-only; keeps history)
+    tools/airysdark_ai_build_ai_response.txt    (only if AI used)
+    .github/workflows/AirysDark-AI_build.yml    (non-Android targets)
+    .github/workflows/AirysDark-AI_android.yml  (Android target)
+    pr_body_build.md                            (for create-pull-request step)
 """
 
 import os
 import re
 import sys
 import json
+import shlex
 import pathlib
 import textwrap
+import subprocess
 
 ROOT = pathlib.Path(os.getenv("PROJECT_DIR", ".")).resolve()
 TOOLS = ROOT / "tools"
@@ -35,7 +43,9 @@ PROB_JSON = TOOLS / "airysdark_ai_prob_report.json"
 PROB_LOG  = TOOLS / "airysdark_ai_prob_report.log"
 AI_OUT    = TOOLS / "airysdark_ai_build_ai_response.txt"
 PR_BODY   = ROOT / "pr_body_build.md"
-BUILD_WF  = WF_DIR / "AirysDark-AI_build.yml"
+BUILD_WF  = WF_DIR / "AirysDark-AI_build.yml"          # generic (non-Android)
+ANDROID_WF = WF_DIR / "AirysDark-AI_android.yml"       # Android-only workflow
+
 
 # ---------------- Utilities ----------------
 
@@ -89,7 +99,16 @@ def find_first(globs):
             return found[0]
     return None
 
-# ---------------- Build command heuristics ----------------
+def _sh(cmd: str, cwd: pathlib.Path | None = None, timeout: int = 20):
+    try:
+        p = subprocess.run(cmd, cwd=str(cwd) if cwd else None, shell=True, text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+        return p.stdout or "", p.returncode
+    except Exception as e:
+        return f"(exec failed: {e})", 127
+
+
+# ---------------- Build command heuristics (original behavior) ----------------
 
 def guess_android_cmd():
     wrappers = [ROOT / "gradlew", *ROOT.glob("**/gradlew")]
@@ -184,7 +203,90 @@ def propose_build_cmd(target: str) -> str:
     elif t == "ninja":   return guess_ninja_cmd()
     else:                return "echo 'Unknown TARGET; update env.TARGET' && exit 1"
 
-# ---------------- Setup steps for build workflow ----------------
+
+# ---------------- EXTRA: Android deep probe (NEW) ----------------
+
+def _find_gradlews_all():
+    gws = []
+    if (ROOT / "gradlew").exists():
+        gws.append(ROOT / "gradlew")
+    for p in ROOT.glob("**/gradlew"):
+        if p not in gws:
+            gws.append(p)
+    return gws
+
+def _parse_settings_modules(txt: str):
+    mods = set()
+    # include(":app", ":lib")
+    for m in re.findall(r'include\s*\((.*?)\)', txt, flags=re.S|re.I):
+        for part in re.split(r'[,\s]+', m.strip()):
+            part = part.strip().strip("'\"")
+            if part.startswith(":"): part = part[1:]
+            if part: mods.add(part)
+    # Kotlin DSL lines like: include(":app")
+    for m in re.findall(r'include\s*\(?\s*[\'"](:?[^\'"]+)[\'"]\s*\)?', txt, flags=re.I):
+        v = m.strip().strip("'\"")
+        if v.startswith(":"): v = v[1:]
+        if v: mods.add(v)
+    return sorted(mods)
+
+def android_deep_probe():
+    """
+    Best-effort module & task discovery without requiring Java to be installed.
+    If tasks can be listed, prefer tasks actually present; otherwise heuristics.
+    """
+    info = {
+        "wrappers": [],
+        "modules": [],
+        "tasks_sample": "",
+        "task_guess": [],
+        "cmd_recommendation": "",
+    }
+    gws = _find_gradlews_all()
+    info["wrappers"] = [str(x) for x in gws]
+
+    # read settings.gradle / settings.gradle.kts under the wrapper dir
+    if gws:
+        gw = gws[0]
+        gdir = gw.parent
+        for s in ("settings.gradle", "settings.gradle.kts"):
+            sp = gdir / s
+            if sp.exists():
+                mods = _parse_settings_modules(sp.read_text(errors="ignore"))
+                info["modules"] = mods
+                break
+
+        # Try to read tasks table quickly (may fail if JDK missing — ignore)
+        out, _ = _sh("./gradlew -q tasks --all", cwd=gdir, timeout=20)
+        if out:
+            info["tasks_sample"] = out[:20000]
+
+    # rank guesses
+    guesses = []
+    prefers = info["modules"] or ["app", "mobile", "android"]
+    for m in prefers:
+        for t in ("assembleDebug","bundleDebug","assembleRelease","bundleRelease"):
+            guesses.append(f":{m}:{t}")
+    for t in ("assembleDebug","bundleDebug","assembleRelease","bundleRelease","build"):
+        guesses.append(t)
+
+    if info["tasks_sample"]:
+        present = [g for g in guesses if re.search(rf"(^|\s){re.escape(g)}(\s|$)", info["tasks_sample"])]
+        if present:
+            guesses = present
+    info["task_guess"] = guesses[:8]
+
+    if gws:
+        gdir = gws[0].parent
+        chosen = guesses[0] if guesses else "assembleDebug"
+        info["cmd_recommendation"] = f'cd {shlex.quote(str(gdir))} && ./gradlew {chosen} --stacktrace'
+    else:
+        info["cmd_recommendation"] = "./gradlew assembleDebug --stacktrace"
+
+    return info
+
+
+# ---------------- Setup steps for generic build workflow (unchanged) ----------------
 
 def setup_steps_yaml(ptype: str) -> str:
     if ptype == "android":
@@ -247,7 +349,8 @@ def setup_steps_yaml(ptype: str) -> str:
     # cmake/python/bazel/scons/ninja/unknown rely on setup-python only
     return ""
 
-# ---------------- Build workflow generation ----------------
+
+# ---------------- Generic build workflow generation (your original path) ----------------
 
 def render_build_workflow(target: str, build_cmd: str) -> str:
     setup = setup_steps_yaml(target)
@@ -391,7 +494,130 @@ __SETUP__
            .replace("__GHA_END__", "}}"))
     return yml
 
-# ---------------- OpenAI (optional) ----------------
+
+# ---------------- Android-only workflow generation (NEW) ----------------
+
+def write_workflow_android():
+    """
+    Android workflow calls the self-contained runner (tools/AirysDark-AI_android.py)
+    which handles probe/loop/fix internally. No extra fetching here.
+    """
+    yml = r"""
+name: AirysDark-AI - Android (generated)
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-runner:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (no credentials)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - run: yes | sdkmanager --licenses
+      - run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Verify tools exist (no extra fetches here)
+        run: |
+          set -euxo pipefail
+          test -f tools/AirysDark-AI_Request.py
+          test -f tools/AirysDark-AI_android.py
+          ls -la tools
+
+      - name: Run Android AI loop
+        id: run
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+          AI_BUILDER_ATTEMPTS: "3"
+          AI_LOG_TAIL: "160"
+        run: |
+          set -euxo pipefail
+          python3 tools/AirysDark-AI_android.py --mode run | tee /tmp/android.out
+          if grep -q '^BUILD_CMD=' /tmp/android.out; then
+            CMD=$(grep -E '^BUILD_CMD=' /tmp/android.out | sed 's/^BUILD_CMD=//')
+            echo "BUILD_CMD=$CMD" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload logs & artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-ai-loop
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build.log
+            .pre_ai_fix.patch
+            tools/android_ai_response.txt
+            tools/android_probe.json
+            tools/android_probe.log
+
+      - name: Stage changes
+        id: diff
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else:
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pin remote with Fine-grained PAT
+        if: ${{ steps.diff.outputs.changed == 'true' }}
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          set -euxo pipefail
+          git config --local --name-only --get-regexp '^http\.https://github\.com/\.extraheader$' >/dev/null 2>&1 && \
+            git config --local --unset-all http.https://github.com/.extraheader || true
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git remote set-url origin "https://x-access-token:${BOT_TOKEN}@github.com/${REPO_SLUG}.git"
+          git config --global url."https://x-access-token:${BOT_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git remote -v
+
+      - name: Create PR with Android changes
+        if: ${{ steps.diff.outputs.changed == 'true' }}
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.BOT_TOKEN }}
+          branch: ai/airysdark-ai-android-loop
+          commit-message: "chore: Android AI loop changes"
+          title: "AirysDark-AI: Android AI loop changes"
+          body: |
+            Android AI loop updated files (build fixes or config changes).
+            - Build command: ${{ steps.run.outputs.BUILD_CMD }}
+            - Logs: see artifact "android-ai-loop"
+          labels: automation, ci
+""".lstrip("\n")
+    ANDROID_WF.write_text(yml, encoding="utf-8")
+    return str(ANDROID_WF)
+
+
+# ---------------- OpenAI (optional, unchanged) ----------------
 
 def call_openai(prompt: str) -> str:
     import requests
@@ -445,6 +671,7 @@ def build_ai_prompt(context: dict, target: str, build_cmd: str) -> str:
     {files_list}
     """)
 
+
 # ---------------- Main ----------------
 
 def main():
@@ -461,35 +688,54 @@ def main():
     # 3) Propose a build command for TARGET
     build_cmd = propose_build_cmd(target)
 
-    # 4) Compose probe report
+    # 3b) Android deep probe (extra data & better recommendation) — NEW
+    android_info = None
+    if (target or "").lower() == "android":
+        android_info = android_deep_probe()
+        # prefer the deep-probe recommendation
+        if android_info.get("cmd_recommendation"):
+            build_cmd = android_info["cmd_recommendation"]
+
+    # 4) Compose probe report (JSON) — keep AND append log history
     report = {
         "target": target,
         "proposed_build_cmd": build_cmd,
         "detector": {"types": types, "evidence": evidence},
         "repo": snapshot,
+        "android_probe": android_info or {},
     }
     PROB_JSON.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    PROB_LOG.write_text("AirysDark-AI probe report\n\n" + json.dumps(report, indent=2), encoding="utf-8")
 
-    # 5) Generate workflow (AI if key present; validated template otherwise)
-    used_ai = False
-    try:
-        prompt = build_ai_prompt(report, target, build_cmd)
-        wf_text = call_openai(prompt)
-        used_ai = True
-        AI_OUT.write_text(wf_text, encoding="utf-8")
-        # sanity checks; fallback if something critical is missing
-        must_have = ["workflow_dispatch", "build.log", "peter-evans/create-pull-request"]
-        if not all(s in wf_text for s in must_have):
+    # append-only log (NEW)
+    with PROB_LOG.open("a", encoding="utf-8") as f:
+        from datetime import datetime, timezone
+        f.write(f"\n==== PROBE @ {datetime.now(timezone.utc).isoformat()} ====\n")
+        f.write(json.dumps(report, indent=2) + "\n")
+
+    # 5) Generate workflow
+    generated_path = None
+    if (target or "").lower() == "android":
+        generated_path = write_workflow_android()
+        used_ai = False  # Android path uses the android runner, not AI-drafted YAML
+    else:
+        # AI-drafted generic build, else fallback template
+        used_ai = False
+        try:
+            prompt = build_ai_prompt(report, target, build_cmd)
+            wf_text = call_openai(prompt)
+            used_ai = True
+            AI_OUT.write_text(wf_text, encoding="utf-8")
+            must_have = ["workflow_dispatch", "build.log", "peter-evans/create-pull-request"]
+            if not all(s in wf_text for s in must_have):
+                wf_text = render_build_workflow(target, build_cmd)
+                used_ai = False
+        except Exception:
             wf_text = render_build_workflow(target, build_cmd)
             used_ai = False
-    except Exception:
-        wf_text = render_build_workflow(target, build_cmd)
-        used_ai = False
+        BUILD_WF.write_text(wf_text, encoding="utf-8")
+        generated_path = str(BUILD_WF)
 
-    BUILD_WF.write_text(wf_text, encoding="utf-8")
-
-    # 6) PR body file (used by workflow step)
+    # 6) PR body file
     body = []
     body.append("### AirysDark-AI: Probe results")
     body.append("")
@@ -504,22 +750,30 @@ def main():
     body.append("")
     body.append(f"**Selected target:** `{target}`")
     body.append(f"**Proposed build command:** `{build_cmd}`")
+    if android_info:
+        body.append("")
+        body.append("**Android probe details:**")
+        body.append(f"- wrappers: {android_info.get('wrappers')}")
+        body.append(f"- modules: {android_info.get('modules')}")
+        if android_info.get("task_guess"):
+            body.append(f"- guessed tasks: {android_info['task_guess']}")
     body.append("")
-    body.append(f"- Workflow written: `.github/workflows/AirysDark-AI_build.yml`")
-    body.append(f"- AI drafted workflow: {'yes' if used_ai else 'no (template fallback)'}")
+    body.append(f"- Workflow written: `{generated_path}`")
+    body.append(f"- AI drafted workflow: {'yes' if used_ai else 'no (template/runner path)'}")
     PR_BODY.write_text("\n".join(body) + "\n", encoding="utf-8")
 
-    # 7) Make sure there is a change for the PR step to commit (safe + idempotent)
+    # 7) Ensure something changed for the PR step
     (TOOLS / ".ai_probe_touch").write_text(str(__import__("time").time()))
 
-    # Do NOT commit here; the workflow's create-pull-request step will commit & open the PR
     print("✅ Probe complete")
     print(f"  Target: {target}")
     print(f"  Build cmd: {build_cmd}")
     print(f"  Report: {PROB_JSON}")
     print(f"  Log:    {PROB_LOG}")
-    print(f"  AI out: {AI_OUT if AI_OUT.exists() else '(none)'}")
-    print(f"  Build workflow: {BUILD_WF}")
+    if ANDROID_WF.exists():
+        print(f"  Android workflow: {ANDROID_WF}")
+    if BUILD_WF.exists():
+        print(f"  Generic workflow: {BUILD_WF}")
     print(f"  PR body: {PR_BODY}")
     return 0
 

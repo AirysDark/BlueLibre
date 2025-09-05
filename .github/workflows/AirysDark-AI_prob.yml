@@ -7,7 +7,7 @@ permissions:
   contents: write
   pull-requests: write
 
-# Set TARGET to one of the detected types (android, linux, cmake, node, python, rust, dotnet, maven, flutter, go)
+# Set TARGET to one of the detected types: android, linux, cmake, node, python, rust, dotnet, maven, flutter, go
 env:
   TARGET: "android"
 
@@ -23,11 +23,11 @@ jobs:
 
       - name: Guard: ensure TARGET is set
         run: |
-          if [ "${{ env.TARGET }}" = "__SET_ME__" ]; then
+          if [ "$TARGET" = "__SET_ME__" ]; then
             echo "TARGET is not set. Edit this workflow to set env.TARGET (e.g. android) and run again."
             exit 1
           fi
-          echo "TARGET=${{ env.TARGET }}"
+          echo "TARGET=$TARGET"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -43,8 +43,8 @@ jobs:
 
       - name: Run repo probe (AI-assisted)
         env:
-          TARGET: ${{ env.TARGET }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}   # optional
+          TARGET: ${{ env.TARGET }}                 # optional (inherited from job env anyway)
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
         run: |
           set -euxo pipefail

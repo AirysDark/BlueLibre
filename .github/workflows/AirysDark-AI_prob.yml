@@ -67,11 +67,11 @@ jobs:
           git add -A
           if git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-          else:
+          else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Open PR with generated build workflow
+      - name: Create PR for generated build workflow
         if: steps.diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
@@ -80,4 +80,4 @@ jobs:
           commit-message: "chore: add AirysDark-AI_build.yml (from probe)"
           title: "AirysDark-AI: add build workflow (from probe)"
           body-path: pr_body_build.md
-          labels: "automation, ci"
+          labels: automation, ci

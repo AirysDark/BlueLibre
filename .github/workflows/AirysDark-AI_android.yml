@@ -118,7 +118,7 @@ jobs:
       - name: Pin git remote with token (just-in-time)
         if:  == 'true'
         env:
-          BOT_TOKEN: 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
+          BOT_TOKEN: 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
           REPO_SLUG: AirysDark/BlueLibre
         run: |
           set -euxo pipefail
@@ -133,7 +133,7 @@ jobs:
         if:  == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
-          token: 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
+          token: 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
           branch: ai/airysdark-ai-autofix-android
           commit-message: "chore: AirysDark-AI auto-fix (android)"
           title: "AirysDark-AI: automated build fix (android)"

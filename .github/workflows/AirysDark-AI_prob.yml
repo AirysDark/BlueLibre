@@ -14,7 +14,7 @@
       KB_COLLECTION_REPO: "AirysDark-AI/ai-kb-collection"
 
     jobs:
-  probe:
+    probe:
     runs-on: ubuntu-latest
     steps:
       # --- Guards (must be first) ---

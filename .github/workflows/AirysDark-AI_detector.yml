@@ -1,76 +1,89 @@
-name: AirysDark-AI_detector (bootstrap)
+name: AirysDark-AI - Detector (bootstrap)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  bootstrap:
+  detect:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (no credentials)
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install deps
-        run: pip install requests pyyaml
-
-      - name: Ensure AirysDark-AI tools
-        shell: bash
+      # Fetch once here ONLY (per your design). The generated probe workflow will NOT fetch tools again.
+      - name: Fetch tools.tar (ONLY here)
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           mkdir -p tools
-          BASE_URL="https://raw.githubusercontent.com/AirysDark-AI/AirysDark-AI_builder/main/tools"
-          curl -fL "$BASE_URL/AirysDark-AI_detector.py" -o tools/AirysDark-AI_detector.py
-          curl -fL "$BASE_URL/AirysDark-AI_probe.py"     -o tools/AirysDark-AI_probe.py
-          curl -fL "$BASE_URL/AirysDark-AI_builder.py"  -o tools/AirysDark-AI_builder.py
+          curl -fL "https://raw.githubusercontent.com/AirysDark-AI/AirysDark-AI_builder/main/tools/tools.tar" -o /tmp/tools.tar
+          tar -xvf /tmp/tools.tar -C tools
           ls -la tools
 
-      - name: Generate PROBE workflows (one per detected type)
-        id: gen
-        shell: bash
+      - name: Run detector (generates AirysDark-AI_prob.yml + logs)
         run: |
           set -euxo pipefail
           python3 tools/AirysDark-AI_detector.py
-          echo "Generated files:"
-          ls -la .github/workflows/AirysDark-AI_prob_*.yml || true
 
-      - name: Upload generated probe workflows
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: airysdark-ai-probe-workflows
-          path: .github/workflows/AirysDark-AI_prob_*.yml
-          if-no-files-found: warn
-          retention-days: 7
+      - name: Compose PR body with detected types
+        run: |
+          set -euxo pipefail
+          echo "### AirysDark-AI: detector results" > pr_body.md
+          echo "" >> pr_body.md
+          if [ -f tools/airysdark_ai_scan.json ]; then
+            echo "**Detected build types:**" >> pr_body.md
+            python3 - <<'PY' >> pr_body.md
+import json
+from pathlib import Path
+p = Path("tools/airysdark_ai_scan.json")
+j = json.loads(p.read_text(errors="ignore")) if p.exists() else {}
+types = j.get("types", [])
+if types:
+    for t in types:
+        print(f"- {t}")
+else:
+    print("- (none)")
+PY
+          else
+            echo "_No detector JSON found (tools/airysdark_ai_scan.json)._" >> pr_body.md
+          fi
+          echo "" >> pr_body.md
+          echo "**Next steps:**" >> pr_body.md
+          echo "1. Edit \`.github/workflows/AirysDark-AI_prob.yml\` and set **env.TARGET** to the build you want (e.g. \`android\`, \`linux\`, \`cmake\`)." >> pr_body.md
+          echo "2. Merge this PR." >> pr_body.md
+          echo "3. Manually run the workflow **AirysDark-AI - Probe (LLM builds workflow)** from the Actions tab." >> pr_body.md
 
-      - name: Create PR with PROBE workflows
+      - name: Stage detector outputs
+        id: diff
+        run: |
+          set -euxo pipefail
+          git add -A
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Use your Fine-grained PAT stored as BOT_TOKEN
+      - name: Open PR with PROB workflow
+        if: steps.diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.BOT_TOKEN }}
-          branch: ai/airysdark-ai-probes
-          title: "AirysDark-AI: add per-type PROBE workflows"
-          commit-message: "chore: generate AirysDark-AI_prob_<type> probe workflows"
-          body: |
-            This PR adds one **PROBE** workflow per detected build type.
-
-            How to proceed:
-            1) Merge this PR.
-            2) Run the desired "AirysDark-AI — Probe <Type>" workflow from Actions.
-               - It will scan the entire repo, pick the correct BUILD_CMD.
-               - It will then generate the final AI build workflow `.github/workflows/AirysDark-AI_<type>.yml`
-                 and open a second PR with that workflow.
-            3) Merge the second PR to enable the final build+AI workflow for that type.
-
-            Notes:
-            - These probe workflows use the canonical tools:
-              https://github.com/AirysDark-AI/AirysDark-AI_builder/tree/main/tools
-            - Ensure you set `BOT_TOKEN` (a PAT with `repo` + `workflow` scopes) in repo Secrets.
+          branch: ai/airysdark-ai-prob
+          commit-message: "chore: add AirysDark-AI_prob.yml + tools (bootstrap)"
+          title: "AirysDark-AI: add single PROB workflow + tools"
+          body-path: pr_body.md
           labels: automation, ci

@@ -9,7 +9,7 @@ permissions:
 
 # Set TARGET to one of the detected types: android, linux, cmake, node, python, rust, dotnet, maven, flutter, go
 env:
-  TARGET: "__SET_ME__"
+  TARGET: "android"
 
 jobs:
   probe:

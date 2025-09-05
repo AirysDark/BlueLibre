@@ -445,7 +445,6 @@ def build_ai_prompt(context: dict, target: str, build_cmd: str) -> str:
 
     Partial file list (first 200):
     {files_list}
-    """.lstrip("\n")
 
 # ---------------- Main ----------------
 

@@ -509,6 +509,10 @@ def main():
     body.append(f"- AI drafted workflow: {'yes' if used_ai else 'no (template fallback)'}")
     PR_BODY.write_text("\n".join(body) + "\n", encoding="utf-8")
 
+    # 7) Make sure there is a change for the PR step to commit (safe + idempotent)
+    (TOOLS / ".ai_probe_touch").write_text(str(__import__("time").time()))
+
+    # Do NOT commit here; the workflow's create-pull-request step will commit & open the PR
     print("✅ Probe complete")
     print(f"  Target: {target}")
     print(f"  Build cmd: {build_cmd}")

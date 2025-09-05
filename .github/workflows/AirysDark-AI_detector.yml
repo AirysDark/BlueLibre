@@ -10,6 +10,7 @@ permissions:
 jobs:
   detect:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout (no credentials)
         uses: actions/checkout@v4
@@ -22,52 +23,63 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install jq (for JSON formatting)
-        run: |
-          set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y jq
-
-      # Fetch once here ONLY. The generated PROB workflow will NOT re-fetch tools.
+      # Fetch tools ONLY here (per your design). The generated PROBE/BUILD flows won’t fetch again.
       - name: Fetch tools.tar (ONLY here)
+        shell: bash
         run: |
           set -euxo pipefail
           mkdir -p tools
-          curl -fL https://raw.githubusercontent.com/AirysDark-AI/AirysDark-AI_builder/main/tools/tools.tar -o /tmp/tools.tar
+          curl -fL "https://raw.githubusercontent.com/AirysDark-AI/AirysDark-AI_builder/main/tools/tools.tar" -o /tmp/tools.tar
           tar -xvf /tmp/tools.tar -C tools
           ls -la tools
 
-      - name: Run detector (generates AirysDark-AI_prob.yml + logs)
+      - name: Run detector (writes scan.json + AirysDark-AI_prob.yml)
+        shell: bash
         run: |
           set -euxo pipefail
           python3 tools/AirysDark-AI_detector.py
+          test -f tools/airysdark_ai_scan.json
+          test -f .github/workflows/AirysDark-AI_prob.yml
 
-      - name: Compose PR body with detected types
+      - name: Build PR body (detector results)
+        id: body
+        shell: bash
         run: |
           set -euo pipefail
           echo "### AirysDark-AI: detector results" > pr_body.md
           echo "" >> pr_body.md
           if [ -f tools/airysdark_ai_scan.json ]; then
             echo "**Detected build types:**" >> pr_body.md
-            types=$(jq -r '.types[]?' tools/airysdark_ai_scan.json 2>/dev/null || true)
-            if [ -n "$types" ]; then
-              while IFS= read -r t; do
-                echo "- $t" >> pr_body.md
-              done <<< "$types"
-            else
-              echo "- (none)" >> pr_body.md
-            fi
+            python3 - <<'PY' >> pr_body.md
+import json, sys
+from pathlib import Path
+p = Path("tools/airysdark_ai_scan.json")
+j = json.loads(p.read_text(errors="ignore")) if p.exists() else {}
+types = j.get("types", [])
+evid  = j.get("evidence", {})
+if types:
+    for t in types:
+        print(f"- {t}")
+        for ev in (evid.get(t, [])[:6] or []):
+            print(f"  - {ev}")
+else:
+    print("- (none)")
+PY
           else
-            echo "_No detector JSON found (tools/airysdark_ai_scan.json)._ " >> pr_body.md
+            echo "_No detector JSON found (tools/airysdark_ai_scan.json)._" >> pr_body.md
           fi
-          echo "" >> pr_body.md
-          echo "**Next steps:**" >> pr_body.md
-          echo "1. Edit \`.github/workflows/AirysDark-AI_prob.yml\` and set **env.TARGET** (e.g. \`android\`, \`linux\`, \`cmake\`)." >> pr_body.md
-          echo "2. Merge this PR." >> pr_body.md
-          echo "3. Manually run **AirysDark-AI - Probe (LLM builds workflow)** from the Actions tab." >> pr_body.md
+          {
+            echo ""
+            echo "**Next steps:**"
+            echo "1. Edit \`.github/workflows/AirysDark-AI_prob.yml\` and set \`env.TARGET\` to the build you want (e.g. \`android\`, \`linux\`, \`cmake\`)."
+            echo "2. Merge this PR."
+            echo "3. From the Actions tab, manually run **AirysDark-AI - Probe (LLM builds workflow)**."
+          } >> pr_body.md
+          echo "PR_BODY_PATH=pr_body.md" >> "$GITHUB_OUTPUT"
 
       - name: Stage detector outputs
         id: diff
+        shell: bash
         run: |
           set -euxo pipefail
           git add -A
@@ -77,13 +89,14 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Open PR with PROB workflow
+      # PR creation uses BOT_TOKEN. (KB_PUSH_TOKEN is only used later by probe/build workflows.)
+      - name: Open PR with PROBE workflow
         if: steps.diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.BOT_TOKEN }}
           branch: ai/airysdark-ai-prob
           commit-message: "chore: add AirysDark-AI_prob.yml + tools (bootstrap)"
-          title: "AirysDark-AI: add single PROB workflow + tools"
-          body-path: pr_body.md
+          title: "AirysDark-AI: add single PROBE workflow + tools"
+          body-path: ${{ steps.body.outputs.PR_BODY_PATH }}
           labels: automation, ci

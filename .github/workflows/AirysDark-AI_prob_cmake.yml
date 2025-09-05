@@ -1,9 +1,14 @@
 name: AirysDark-AI — Probe Cmake
 
+name: AirysDark-AI — Probe <Type>
+
 on:
   workflow_dispatch: {}
-  push: { branches: ["**"] }
-
+  push:
+    branches:
+      - "**"
+  pull_request:
+  
 permissions:
   contents: write
   pull-requests: write

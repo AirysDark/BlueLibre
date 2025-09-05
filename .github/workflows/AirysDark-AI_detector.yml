@@ -99,4 +99,4 @@ PY
           commit-message: "chore: add AirysDark-AI_prob.yml + tools (bootstrap)"
           title: "AirysDark-AI: add single PROBE workflow + tools"
           body-path: ${{ steps.body.outputs.PR_BODY_PATH }}
-          labels: automation, ci
+          labels: "automation, ci"

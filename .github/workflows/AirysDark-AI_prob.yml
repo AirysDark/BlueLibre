@@ -80,4 +80,4 @@ jobs:
           commit-message: "chore: add AirysDark-AI_build.yml (from probe)"
           title: "AirysDark-AI: add build workflow (from probe)"
           body-path: pr_body_build.md
-          labels: [automation, ci]
+          labels: "automation, ci"

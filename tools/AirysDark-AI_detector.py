@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 # AirysDark-AI_detector.py
 #
-# Recursively scan the repository for build systems & hints.
-# - Looks in every folder (skips .git)
-# - Uses folder-name hints (linux/android/windows etc.)
-# - CMake content-aware detection (desktop-like => also mark "linux")
-# - Writes:
-#     tools/airysdark_ai_scan.json  (machine-readable, with evidence)
-#     tools/airysdark_ai_scan.md    (human-friendly summary)
-#     .github/workflows/AirysDark-AI_prob.yml  (generic manual probe workflow)
+# Step 1 of the pipeline (Detector):
+#   - Scans the repo (all subfolders) for build systems
+#   - Uses folder-name hints & CMake content to refine detection
+#   - Writes:
+#       tools/airysdark_ai_scan.json  (types + evidence + hints + sample files)
+#       pr_body_detect.md             (nice PR body listing detections & next steps)
+#       .github/workflows/AirysDark-AI_prob.yml  (manual-run probe workflow)
 #
-# The PROBE workflow is manual-run and expects you to set env.TARGET.
+# The PROBE workflow (run later) will create the build workflow PR.
 
 import os
 import json
-import sys
 import pathlib
 import textwrap
+from typing import Dict, List, Tuple
 
 ROOT = pathlib.Path(os.getenv("PROJECT_DIR", ".")).resolve()
 WF_DIR = ROOT / ".github" / "workflows"
@@ -24,198 +23,193 @@ TOOLS_DIR = ROOT / "tools"
 WF_DIR.mkdir(parents=True, exist_ok=True)
 TOOLS_DIR.mkdir(parents=True, exist_ok=True)
 
-# -------------------- scanning helpers --------------------
+SCAN_JSON = TOOLS_DIR / "airysdark_ai_scan.json"
+PR_BODY_DETECT = ROOT / "pr_body_detect.md"
 
-def scan_all_files():
-    """Return list of (lower_filename, relative_path) for every file in repo (skips .git)."""
-    out = []
-    for r, dnames, fnames in os.walk(ROOT):
-        # skip .git
-        if ".git" in dnames:
-            dnames.remove(".git")
-        rpath = pathlib.Path(r)
-        for fn in fnames:
-            p = rpath / fn
+# ---------------- Full-repo scan ----------------
+
+def scan_all_files(max_files=10000) -> List[Tuple[str, pathlib.Path]]:
+    files = []
+    for r, ds, fs in os.walk(ROOT):
+        if ".git" in ds:
+            ds.remove(".git")
+        for fn in fs:
+            p = pathlib.Path(r) / fn
             try:
                 rel = p.relative_to(ROOT)
             except Exception:
                 rel = p
-            out.append((fn.lower(), rel))
-    return out
+            files.append((fn.lower(), rel))
+            if len(files) >= max_files:
+                return files
+    return files
 
-def read_text_safe(relpath: pathlib.Path) -> str:
+def read_text_safe(p: pathlib.Path) -> str:
     try:
-        return (ROOT / relpath).read_text(errors="ignore")
+        return (ROOT / p).read_text(errors="ignore")
     except Exception:
         return ""
 
-def all_dir_name_hints(files):
-    """Collect EVERY path segment as a lowercased name-hint."""
+def collect_dir_name_hints(files: List[Tuple[str, pathlib.Path]]) -> List[str]:
     names = set()
     for _, rel in files:
         for part in pathlib.Path(rel).parts:
             names.add(part.lower())
-    return names
+    # return as sorted list for JSON stability
+    return sorted(names)
 
-# -------------------- content-aware CMake classifier --------------------
+# ---------------- CMake classifier ----------------
 
 ANDROID_HINTS = (
-    "android", "android_abi", "android_platform", "ndk",
-    "externalnativebuild", "gradle", "cmake_android",
-    "find_library(log)", "log-lib", "loglib"
-)
-DESKTOP_HINTS = (
-    "add_executable", "pkgconfig", "find_package(", "threads", "pthread",
-    "x11", "wayland", "gtk", "qt", "set(cmake_system_name linux"
+    "android", "android_abi", "android_platform", "ndk", "cmake_android", "gradle", "externalnativebuild",
+    "find_library(log)", "log-lib", "loglib",
 )
 
-def cmakelists_flavor(txt: str) -> str:
-    t = txt.lower()
+DESKTOP_HINTS = (
+    "add_executable", "pkgconfig", "find_package(", "threads", "pthread", "x11", "wayland", "gtk", "qt",
+    "set(cmake_system_name linux",
+)
+
+def cmakelists_flavor(cm_txt: str) -> str:
+    t = cm_txt.lower()
     if any(h in t for h in ANDROID_HINTS):
         return "android"
     if any(h in t for h in DESKTOP_HINTS):
         return "desktop"
-    # default: desktop unless clearly android
-    return "desktop"
+    return "desktop"  # default bias
 
-# -------------------- detection --------------------
+# ---------------- Detection ----------------
 
-def detect_types_with_evidence():
+def detect_types() -> Tuple[List[str], Dict[str, List[str]]]:
     files = scan_all_files()
     fnames = [n for n, _ in files]
     rels   = [str(p).lower() for _, p in files]
-    dir_hints = all_dir_name_hints(files)
+    dir_hints = collect_dir_name_hints(files)
 
-    types = []
-    evidence = { }  # type -> list[str]
+    evidence: Dict[str, List[str]] = {}
+    types: List[str] = []
 
-    def add(t, ev):
+    def add(t: str, why: str):
         if t not in types:
             types.append(t)
-        evidence.setdefault(t, [])
-        if isinstance(ev, (list, tuple, set)):
-            evidence[t].extend(str(x) for x in ev)
-        else:
-            evidence[t].append(str(ev))
+        evidence.setdefault(t, []).append(why)
 
-    # --- folder-name hints ---
-    for name in ("linux", "android", "windows", "win", "ios", "mac", "darwin", "unix"):
-        if name in dir_hints:
-            # map a couple of common aliases
-            if name in ("windows", "win"):
-                add("windows", f"folder hint: {name}")
-            else:
-                add(name, f"folder hint: {name}")
+    # Folder-name hints (broad)
+    if "linux" in dir_hints:
+        add("linux", "folder hint: 'linux' present in path segments")
+    if "android" in dir_hints:
+        add("android", "folder hint: 'android' present in path segments")
+    if "windows" in dir_hints:
+        add("windows", "folder hint: 'windows' present in path segments")
 
-    # --- Android / Gradle ---
-    if "gradlew" in fnames or any("build.gradle" in n or "settings.gradle" in n for n in fnames):
-        add("android", [p for (n, p) in files if n in ("gradlew", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")])
+    # Android / Gradle
+    for name, rel in files:
+        if name == "gradlew":
+            add("android", f"found wrapper: {rel}")
+        if name.startswith("build.gradle"):
+            add("android", f"found gradle: {rel}")
+        if name.startswith("settings.gradle"):
+            add("android", f"found gradle settings: {rel}")
 
-    # --- CMake (also content-aware -> might imply linux) ---
-    cmake_paths = [p for (n, p) in files if n == "cmakelists.txt"]
+    # CMake
+    cmake_paths = [rel for (n, rel) in files if n == "cmakelists.txt"]
     if cmake_paths:
-        add("cmake", cmake_paths)
+        add("cmake", f"found {len(cmake_paths)} CMakeLists.txt")
         for p in cmake_paths:
-            flavor = cmakelists_flavor(read_text_safe(p))
+            txt = read_text_safe(p)
+            flavor = cmakelists_flavor(txt)
             if flavor == "desktop":
-                add("linux", f"CMakeLists.txt desktop-like: {p}")
+                add("linux", f"CMakeLists suggests desktop build: {p}")
+            else:
+                add("android", f"CMakeLists suggests Android/NDK: {p}")
 
-    # --- Linux umbrella: Make / Meson / *.mk ---
-    if "makefile" in fnames:
-        add("linux", [p for (n, p) in files if n == "makefile"])
-    if "gnumakefile" in fnames:
-        add("linux", [p for (n, p) in files if n == "gnumakefile"])
-    if "meson.build" in fnames:
-        add("linux", [p for (n, p) in files if n == "meson.build"])
-    if any(r.endswith(".mk") for r in rels):
-        add("linux", [p for (_, p) in files if str(p).lower().endswith(".mk")])
+    # Linux umbrella
+    for name, rel in files:
+        if name in ("makefile", "gnumakefile") or name.endswith(".mk"):
+            add("linux", f"found make build file: {rel}")
+        if name == "meson.build":
+            add("linux", f"found Meson build: {rel}")
+        if name == "build.ninja":
+            add("ninja", f"found Ninja build: {rel}")
 
-    # --- Node ---
-    if "package.json" in fnames:
-        add("node", [p for (n, p) in files if n == "package.json"])
+    # Node
+    for name, rel in files:
+        if name == "package.json":
+            add("node", f"found package.json: {rel}")
+            break
 
-    # --- Python ---
-    if "pyproject.toml" in fnames or "setup.py" in fnames:
-        add("python", [p for (n, p) in files if n in ("pyproject.toml", "setup.py")])
+    # Python
+    for name, rel in files:
+        if name == "pyproject.toml":
+            add("python", f"found pyproject.toml: {rel}")
+            break
+    for name, rel in files:
+        if name == "setup.py":
+            add("python", f"found setup.py: {rel}")
+            break
 
-    # --- Rust ---
-    if "cargo.toml" in fnames:
-        add("rust", [p for (n, p) in files if n == "cargo.toml"])
+    # Rust
+    for name, rel in files:
+        if name == "cargo.toml":
+            add("rust", f"found Cargo.toml: {rel}")
+            break
 
-    # --- .NET ---
-    dotnet_files = [p for (_, p) in files if str(p).lower().endswith((".sln", ".csproj", ".fsproj"))]
-    if dotnet_files:
-        add("dotnet", dotnet_files)
+    # .NET
+    for name, rel in files:
+        if name.endswith(".sln") or name.endswith(".csproj") or name.endswith(".fsproj"):
+            add("dotnet", f"found .NET project: {rel}")
+            break
 
-    # --- Maven ---
-    if "pom.xml" in fnames:
-        add("maven", [p for (n, p) in files if n == "pom.xml"])
+    # Maven
+    for name, rel in files:
+        if name == "pom.xml":
+            add("maven", f"found pom.xml: {rel}")
+            break
 
-    # --- Flutter ---
-    if "pubspec.yaml" in fnames:
-        add("flutter", [p for (n, p) in files if n == "pubspec.yaml"])
+    # Flutter
+    for name, rel in files:
+        if name == "pubspec.yaml":
+            add("flutter", f"found pubspec.yaml: {rel}")
+            break
 
-    # --- Go ---
-    if "go.mod" in fnames:
-        add("go", [p for (n, p) in files if n == "go.mod"])
+    # Go
+    for name, rel in files:
+        if name == "go.mod":
+            add("go", f"found go.mod: {rel}")
+            break
 
-    # --- Bazel ---
-    bazel_special = {"workspace", "workspace.bazel", "module.bazel"}
-    if any(n in bazel_special for n in fnames) or any(os.path.basename(r) in ("build", "build.bazel") for r in rels):
-        add("bazel", [p for (n, p) in files if n in bazel_special or os.path.basename(str(p)).lower() in ("build", "build.bazel")])
+    # Bazel
+    for name, rel in files:
+        base = os.path.basename(str(rel)).lower()
+        if name in ("workspace", "workspace.bazel", "module.bazel") or base in ("build", "build.bazel"):
+            add("bazel", f"found Bazel file: {rel}")
+            break
 
-    # --- SCons ---
-    if "sconstruct" in fnames or "sconscript" in fnames:
-        add("scons", [p for (n, p) in files if n in ("sconstruct", "sconscript")])
-
-    # --- Ninja (direct) ---
-    if "build.ninja" in fnames:
-        add("ninja", [p for (n, p) in files if n == "build.ninja"])
+    # SCons
+    for name, rel in files:
+        if name in ("sconstruct", "sconscript"):
+            add("scons", f"found SCons file: {rel}")
+            break
 
     if not types:
-        add("unknown", "no standard build files found")
+        add("unknown", "no known build system files detected")
 
-    # de-dupe evidence entries
-    for t in list(evidence.keys()):
-        seen = set()
-        dedup = []
-        for e in evidence[t]:
-            se = str(e)
-            if se not in seen:
-                seen.add(se)
-                dedup.append(se)
-        evidence[t] = dedup
+    # Add top-level hints and a short file sample to the scan JSON
+    sample_files = [str(p) for _, p in files[:200]]
+    scan = {
+        "types": types,
+        "evidence": evidence,
+        "dir_hints": dir_hints,
+        "sample_files": sample_files,
+    }
+    SCAN_JSON.write_text(json.dumps(scan, indent=2), encoding="utf-8")
 
-    return types, evidence
+    return types, evidence, dir_hints, sample_files
 
-# -------------------- write outputs --------------------
-
-def write_scan_json(types, evidence):
-    obj = {"types": types, "evidence": evidence}
-    (TOOLS_DIR / "airysdark_ai_scan.json").write_text(json.dumps(obj, indent=2), encoding="utf-8")
-    print(f"✅ Wrote: {TOOLS_DIR}/airysdark_ai_scan.json")
-
-def write_scan_md(types, evidence):
-    lines = []
-    lines.append("# AirysDark-AI detector scan\n")
-    if types:
-        lines.append("**Detected build types:**")
-        for t in types:
-            lines.append(f"- {t}")
-    else:
-        lines.append("- (none)")
-    lines.append("\n## Evidence")
-    for t in types:
-        lines.append(f"\n### {t}")
-        for ev in evidence.get(t, []):
-            lines.append(f"- {ev}")
-    (TOOLS_DIR / "airysdark_ai_scan.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"✅ Wrote: {TOOLS_DIR}/airysdark_ai_scan.md")
+# ---------------- PROBE workflow template (fixed) ----------------
 
 def write_prob_workflow():
-    """
-    Writes the PROBE workflow template with the validated YAML (manual run, user sets env.TARGET).
-    """
+    """Write a single manual-run probe workflow with correct diff/PR logic."""
     yml = textwrap.dedent("""\
     name: AirysDark-AI - Probe (LLM builds workflow)
 
@@ -299,19 +293,42 @@ def write_prob_workflow():
               commit-message: "chore: add AirysDark-AI_build.yml (from probe)"
               title: "AirysDark-AI: add build workflow (from probe)"
               body-path: pr_body_build.md
-              labels: "automation, ci"
+              labels: automation, ci
     """)
     (WF_DIR / "AirysDark-AI_prob.yml").write_text(yml, encoding="utf-8")
     print(f"✅ Wrote: {WF_DIR}/AirysDark-AI_prob.yml")
 
-# -------------------- main --------------------
+# ---------------- PR body (Detector) ----------------
+
+def write_pr_body_detect(types: List[str], evidence: Dict[str, List[str]]):
+    lines = []
+    lines.append("### AirysDark-AI: detector results")
+    lines.append("")
+    if types:
+        lines.append("**Detected build types:**")
+        for t in types:
+            lines.append(f"- {t}")
+            for ev in evidence.get(t, [])[:6]:  # limit per type to keep PR body short
+                lines.append(f"  - {ev}")
+    else:
+        lines.append("_No build types detected._")
+    lines.append("")
+    lines.append("**Next steps:**")
+    lines.append("1. Edit **`.github/workflows/AirysDark-AI_prob.yml`** and set `env.TARGET` to the build you want (e.g. `android`, `linux`, `cmake`).")
+    lines.append("2. Merge this PR.")
+    lines.append("3. From the Actions tab, manually run **AirysDark-AI - Probe (LLM builds workflow)**.")
+    lines.append("")
+    PR_BODY_DETECT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"✅ Wrote: {PR_BODY_DETECT}")
+
+# ---------------- Main ----------------
 
 def main():
-    types, evidence = detect_types_with_evidence()
-    write_scan_json(types, evidence)
-    write_scan_md(types, evidence)
+    types, evidence, dir_hints, sample_files = detect_types()
+    print("Detected types:", types)
     write_prob_workflow()
-    print("Detected:", ", ".join(types))
+    write_pr_body_detect(types, evidence)
+    print("Done. Generated PROBE workflow + scan JSON + PR body.")
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

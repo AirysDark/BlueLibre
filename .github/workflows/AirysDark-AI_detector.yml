@@ -28,6 +28,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
 
+      # Fetch once here ONLY. The generated PROB workflow will NOT re-fetch tools.
       - name: Fetch tools.tar (ONLY here)
         run: |
           set -euxo pipefail
@@ -41,35 +42,29 @@ jobs:
           set -euxo pipefail
           python3 tools/AirysDark-AI_detector.py
 
-      - name: Build PR body (as step output)
-        id: prbody
-        shell: bash
+      - name: Compose PR body with detected types
         run: |
           set -euo pipefail
-          {
-            echo "body<<'EOF'"
-            echo "### AirysDark-AI: detector results"
-            echo
-            if [ -f tools/airysdark_ai_scan.json ]; then
-              echo "**Detected build types:**"
-              types=$(jq -r '.types[]?' tools/airysdark_ai_scan.json 2>/dev/null || true)
-              if [ -n "$types" ]; then
-                while IFS= read -r t; do
-                  echo "- $t"
-                done <<< "$types"
-              else
-                echo "- (none)"
-              fi
+          echo "### AirysDark-AI: detector results" > pr_body.md
+          echo "" >> pr_body.md
+          if [ -f tools/airysdark_ai_scan.json ]; then
+            echo "**Detected build types:**" >> pr_body.md
+            types=$(jq -r '.types[]?' tools/airysdark_ai_scan.json 2>/dev/null || true)
+            if [ -n "$types" ]; then
+              while IFS= read -r t; do
+                echo "- $t" >> pr_body.md
+              done <<< "$types"
             else
-              echo "_No detector JSON found (tools/airysdark_ai_scan.json)._"
+              echo "- (none)" >> pr_body.md
             fi
-            echo
-            echo "**Next steps:**"
-            echo "1. Edit \`.github/workflows/AirysDark-AI_prob.yml\` and set **env.TARGET** (e.g. \`android\`, \`linux\`, \`cmake\`)."
-            echo "2. Merge this PR."
-            echo "3. Manually run **AirysDark-AI - Probe (LLM builds workflow)** from the Actions tab."
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          else
+            echo "_No detector JSON found (tools/airysdark_ai_scan.json)._ " >> pr_body.md
+          fi
+          echo "" >> pr_body.md
+          echo "**Next steps:**" >> pr_body.md
+          echo "1. Edit \`.github/workflows/AirysDark-AI_prob.yml\` and set **env.TARGET** (e.g. \`android\`, \`linux\`, \`cmake\`)." >> pr_body.md
+          echo "2. Merge this PR." >> pr_body.md
+          echo "3. Manually run **AirysDark-AI - Probe (LLM builds workflow)** from the Actions tab." >> pr_body.md
 
       - name: Stage detector outputs
         id: diff
@@ -87,8 +82,8 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.BOT_TOKEN }}
-          branch: "ai/airysdark-ai-prob"
+          branch: ai/airysdark-ai-prob
           commit-message: "chore: add AirysDark-AI_prob.yml + tools (bootstrap)"
           title: "AirysDark-AI: add single PROB workflow + tools"
-          body: ${{ steps.prbody.outputs.body }}
-          labels: "automation, ci"
+          body-path: pr_body.md
+          labels: automation, ci

@@ -206,10 +206,10 @@ def detect_types() -> Tuple[List[str], Dict[str, List[str]]]:
 
     return types, evidence, dir_hints, sample_files
 
-# ---------------- PROBE workflow template (fixed) ----------------
+# ---------------- PROBE workflow template (patched for KB + tokens) ----------------
 
 def write_prob_workflow():
-    """Write a single manual-run probe workflow with correct diff/PR logic."""
+    """Write a single manual-run probe workflow with KB caching/collection & proper tokens."""
     yml = textwrap.dedent("""\
     name: AirysDark-AI - Probe (LLM builds workflow)
 
@@ -223,6 +223,8 @@ def write_prob_workflow():
     # Set TARGET to one of the detected types: android, linux, cmake, node, python, rust, dotnet, maven, flutter, go
     env:
       TARGET: "__SET_ME__"
+      # Optional: central KB collection repo to receive snapshots (owner/repo)
+      KB_COLLECTION_REPO: "AirysDark-AI/ai-kb-collection"
 
     jobs:
       probe:
@@ -238,6 +240,13 @@ def write_prob_workflow():
             uses: actions/setup-python@v5
             with:
               python-version: "3.11"
+
+          # ===== AI KB: Restore local cache =====
+          - name: Restore AI KB cache
+            uses: actions/cache@v4
+            with:
+              path: tools/ai_kb
+              key: ai-kb-${{ github.repository }}-v1
 
           - name: Verify tools exist (added by detector PR)
             shell: bash
@@ -271,6 +280,61 @@ def write_prob_workflow():
                 tools/airysdark_ai_build_ai_response.txt
                 pr_body_build.md
                 .github/workflows/AirysDark-AI_build.yml
+
+          # ===== AI KB: Upload as artifact =====
+          - name: Upload AI KB (artifact)
+            if: always()
+            uses: actions/upload-artifact@v4
+            with:
+              name: ai-kb
+              path: tools/ai_kb/**
+              if-no-files-found: warn
+              retention-days: 30
+
+          # ===== AI KB: Save cache back =====
+          - name: Save AI KB cache
+            if: always()
+            uses: actions/cache/save@v4
+            with:
+              path: tools/ai_kb
+              key: ai-kb-${{ github.repository }}-v1
+
+          # ===== AI KB: Push snapshot to central collection repo (optional) =====
+          - name: Push KB snapshot to central collection repo
+            if: always() && env.KB_COLLECTION_REPO != '' && secrets.KB_PUSH_TOKEN != ''
+            shell: bash
+            run: |
+              set -euxo pipefail
+              if [ ! -s tools/ai_kb/knowledge.jsonl ]; then
+                echo "No knowledge.jsonl to push; skipping."
+                exit 0
+              fi
+              OWNER_REPO="${GITHUB_REPOSITORY}"
+              OWNER="${OWNER_REPO%%/*}"
+              REPO="${OWNER_REPO#*/}"
+              TS="$(date -u +'%Y-%m-%dT%H-%M-%SZ')"
+              WORKDIR="$(mktemp -d)"
+              git config --global user.name "airysdark-ai-bot"
+              git config --global user.email "airysdark-ai-bot@users.noreply.github.com"
+              git clone "https://x-access-token:${{ secrets.KB_PUSH_TOKEN }}@github.com/${{ env.KB_COLLECTION_REPO }}.git" "$WORKDIR/kb"
+              cd "$WORKDIR/kb"
+              mkdir -p "${OWNER}/${REPO}/snapshots"
+              cp -f "$GITHUB_WORKSPACE/tools/ai_kb/knowledge.jsonl" "${OWNER}/${REPO}/knowledge.jsonl"
+              cp -f "$GITHUB_WORKSPACE/tools/ai_kb/knowledge.jsonl" "${OWNER}/${REPO}/snapshots/${TS}.jsonl"
+              {
+                echo "repo: ${OWNER_REPO}"
+                echo "run_id: ${GITHUB_RUN_ID}"
+                echo "run_url: https://github.com/${OWNER_REPO}/actions/runs/${GITHUB_RUN_ID}"
+                echo "ref: ${GITHUB_REF}"
+                echo "timestamp: ${TS}"
+              } > "${OWNER}/${REPO}/snapshots/${TS}.meta"
+              git add -A
+              if git diff --cached --quiet; then
+                echo "No KB changes to push."
+                exit 0
+              fi
+              git commit -m "KB snapshot: ${OWNER_REPO} @ ${TS}"
+              git push origin HEAD:main
 
           - name: Stage generated build workflow
             id: diff

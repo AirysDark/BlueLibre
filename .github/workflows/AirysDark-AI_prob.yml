@@ -9,7 +9,7 @@ permissions:
 
 # IMPORTANT: set TARGET to one of: android, linux, cmake
 env:
-  TARGET: "__SET_ME__"  # e.g. android / linux / cmake / node / python / ...
+  TARGET: "android"  # e.g. android / linux / cmake / node / python / ...
 
 jobs:
   probe:

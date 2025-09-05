@@ -379,7 +379,7 @@ __SETUP__
             - Committed the changes for review
           labels: "automation, ci"
 """
-    """.lstrip("\n")
+    ).lstrip("\n")
 
     setup_block = ""
     if setup.strip():
@@ -445,6 +445,7 @@ def build_ai_prompt(context: dict, target: str, build_cmd: str) -> str:
 
     Partial file list (first 200):
     {files_list}
+    """)
 
 # ---------------- Main ----------------
 

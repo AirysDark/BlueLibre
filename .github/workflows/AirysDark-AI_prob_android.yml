@@ -1,0 +1,238 @@
+name: AirysDark-AI - Probe Android
+
+'on':
+  workflow_dispatch: {}
+  push:
+    branches:
+      - '**'
+  pull_request: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+
+      - name: Ensure AirysDark-AI tools (detector, probe, builder)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tools
+          BASE_URL="https://raw.githubusercontent.com/AirysDark-AI/AirysDark-AI_builder/main/tools"
+          curl -fL "$BASE_URL/AirysDark-AI_detector.py" -o tools/AirysDark-AI_detector.py
+          curl -fL "$BASE_URL/AirysDark-AI_probe.py"     -o tools/AirysDark-AI_probe.py
+          curl -fL "$BASE_URL/AirysDark-AI_builder.py"  -o tools/AirysDark-AI_builder.py
+          ls -la tools
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - run: yes | sdkmanager --licenses
+      - run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+      - name: Probe build command (Android)
+        id: probe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/AirysDark-AI_probe.py --type "android" | tee /tmp/probe.out
+          CMD=$(grep -E '^BUILD_CMD=' /tmp/probe.out | sed 's/^BUILD_CMD=//')
+          echo "BUILD_CMD=$CMD" >> "$GITHUB_OUTPUT"
+
+      - name: Generate final workflow .github/workflows/AirysDark-AI_android.yml
+        shell: bash
+        env:
+          BUILD_CMD: "${{ steps.probe.outputs.BUILD_CMD }}"
+        run: |
+          set -euo pipefail
+          mkdir -p .github/workflows
+          cat > .github/workflows/AirysDark-AI_android.yml <<'YAML'
+          name: AirysDark-AI - Android (generated)
+
+          'on':
+            workflow_dispatch: {}
+            push:
+              branches:
+                - '**'
+            pull_request: {}
+
+          jobs:
+            build:
+              runs-on: ubuntu-latest
+              permissions:
+                contents: write
+                pull-requests: write
+              steps:
+                - uses: actions/checkout@v4
+                  with:
+                    fetch-depth: 0
+                    persist-credentials: false
+
+                - uses: actions/setup-python@v5
+                  with:
+                    python-version: "3.11"
+                - run: pip install requests
+
+                # Android SDK / Java
+                - uses: actions/setup-java@v4
+                  with:
+                    distribution: temurin
+                    java-version: "17"
+                - uses: android-actions/setup-android@v3
+                - run: yes | sdkmanager --licenses
+                - run: sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+                - name: Ensure AirysDark-AI tools (detector, builder)
+                  shell: bash
+                  run: |
+                    set -euo pipefail
+                    mkdir -p tools
+                    BASE_URL="https://raw.githubusercontent.com/AirysDark-AI/AirysDark-AI_builder/main/tools"
+                    [ -f tools/AirysDark-AI_detector.py ] || curl -fL "$BASE_URL/AirysDark-AI_detector.py" -o tools/AirysDark-AI_detector.py
+                    [ -f tools/AirysDark-AI_builder.py ]  || curl -fL "$BASE_URL/AirysDark-AI_builder.py"  -o tools/AirysDark-AI_builder.py
+
+                - name: Build (capture)
+                  id: build
+                  shell: bash
+                  run: |
+                    set -euxo pipefail
+                    CMD="$BUILD_CMD"
+                    echo "BUILD_CMD=$CMD" >> "$GITHUB_OUTPUT"
+                    set +e; bash -lc "$CMD" | tee build.log; EXIT=$?; set -e
+                    echo "EXIT_CODE=$EXIT" >> "$GITHUB_OUTPUT"
+                    [ -s build.log ] || echo "(no build output captured)" > build.log
+                    exit 0
+                  continue-on-error: true
+
+                - name: Upload build log
+                  if: always()
+                  uses: actions/upload-artifact@v4
+                  with:
+                    name: android-build-log
+                    path: build.log
+                    if-no-files-found: warn
+                    retention-days: 7
+
+                # --- AI auto-fix (OpenAI -> llama.cpp) ---
+                - name: Build llama.cpp (CMake, no CURL, in temp)
+                  if: always() && ${{ steps.build.outputs.EXIT_CODE != '0' }}
+                  run: |
+                    set -euxo pipefail
+                    TMP="${{ runner.temp }}"
+                    cd "$TMP"
+                    rm -rf llama.cpp
+                    git clone --depth=1 https://github.com/ggml-org/llama.cpp
+                    cd llama.cpp
+                    cmake -S . -B build -D CMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF
+                    cmake --build build -j
+                    echo "LLAMA_CPP_BIN=$PWD/build/bin/llama-cli" >> $GITHUB_ENV
+
+                - name: Fetch GGUF model (TinyLlama)
+                  if: always() && ${{ steps.build.outputs.EXIT_CODE != '0' }}
+                  run: |
+                    mkdir -p models
+                    curl -L -o models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf \
+                      https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+
+                - name: Attempt AI auto-fix (OpenAI -> llama fallback)
+                  if: always() && ${{ steps.build.outputs.EXIT_CODE != '0' }}
+                  env:
+                    PROVIDER: openai
+                    FALLBACK_PROVIDER: llama
+                    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+                    OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+                    MODEL_PATH: models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+                    AI_BUILDER_ATTEMPTS: "3"
+                    BUILD_CMD: ${{ steps.build.outputs.BUILD_CMD }}
+                  run: python3 tools/AirysDark-AI_builder.py || true
+
+                - name: Upload AI patch (if any)
+                  if: always()
+                  uses: actions/upload-artifact@v4
+                  with:
+                    name: android-ai-patch
+                    path: .pre_ai_fix.patch
+                    if-no-files-found: ignore
+                    retention-days: 7
+
+                - name: Check for changes
+                  id: diff
+                  run: |
+                    git add -A
+                    if git diff --cached --quiet; then
+                      echo "changed=false" >> "$GITHUB_OUTPUT"
+                    else:
+                      echo "changed=true" >> "$GITHUB_OUTPUT"
+                    fi
+
+                # Make sure the PR step has credentials for prune/push
+                - name: Pin git remote with token (just-in-time)
+                  if: ${{ steps.diff.outputs.changed == 'true' }}
+                  env:
+                    BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+                    REPO_SLUG: ${{ github.repository }}
+                  run: |
+                    set -euxo pipefail
+                    git config --local --name-only --get-regexp '^http\.https://github\.com/\.extraheader$' >/dev/null 2>&1 && \
+                      git config --local --unset-all http.https://github.com/.extraheader || true
+                    git config --global --add safe.directory "$GITHUB_WORKSPACE"
+                    git remote set-url origin "https://x-access-token:${BOT_TOKEN}@github.com/${REPO_SLUG}.git"
+                    git config --global url."https://x-access-token:${BOT_TOKEN}@github.com/".insteadOf "https://github.com/"
+                    git remote -v
+
+                - name: Create PR with AI fixes
+                  if: ${{ steps.diff.outputs.changed == 'true' }}
+                  uses: peter-evans/create-pull-request@v6
+                  with:
+                    token: ${{ secrets.BOT_TOKEN }}
+                    branch: ai/airysdark-ai-autofix-android
+                    commit-message: "chore: AirysDark-AI auto-fix (android)"
+                    title: "AirysDark-AI: automated build fix (android)"
+                    body: |
+                      This PR was opened automatically by a generated workflow after a failed build.
+                      - Build command: ${{ steps.build.outputs.BUILD_CMD }}
+                      - Captured the failing build log
+                      - Proposed a minimal fix via AI
+                      - Committed the changes for review
+                    labels: automation, ci
+          YAML
+
+      # Pin before the PR that adds the final workflow file
+      - name: Pin git remote with token (just-in-time)
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          set -euxo pipefail
+          git config --local --name-only --get-regexp '^http\.https://github\.com/\.extraheader$' >/dev/null 2>&1 && \
+            git config --local --unset-all http.https://github.com/.extraheader || true
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git remote set-url origin "https://x-access-token:${BOT_TOKEN}@github.com/${REPO_SLUG}.git"
+          git config --global url."https://x-access-token:${BOT_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git remote -v
+
+      - name: Create PR with generated final workflow
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.BOT_TOKEN }}
+          branch: ai/airysdark-ai-workflow-android
+          commit-message: "chore: add AirysDark-AI_android workflow (probed)"
+          title: "AirysDark-AI: add Android workflow (from probe)"
+          body: |
+            This PR adds the final Android AI build workflow, generated by the probe run.
+            - Probed command: ${{ steps.probe.outputs.BUILD_CMD }}
+            - Next: merge this PR, then run "AirysDark-AI - Android (generated)"
+          labels: automation, ci

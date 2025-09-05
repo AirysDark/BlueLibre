@@ -35,35 +35,28 @@ jobs:
           set -euxo pipefail
           python3 tools/AirysDark-AI_detector.py
 
-      - name: Compose PR body with detected types
+      - name: Compose PR body
         run: |
           set -euxo pipefail
-          echo "### AirysDark-AI: detector results" > pr_body.md
-          echo "" >> pr_body.md
+          rm -f pr_body.md
+          printf "### AirysDark-AI: detector results\n\n" >> pr_body.md
           if [ -f tools/airysdark_ai_scan.json ]; then
-            echo "**Detected build types:**" >> pr_body.md
-            python3 - "$PWD/tools/airysdark_ai_scan.json" >> pr_body.md <<'PY'
-import json, sys, pathlib
-p = pathlib.Path(sys.argv[1])
-try:
-    j = json.loads(p.read_text(errors="ignore"))
-    types = j.get("types", [])
-except Exception:
-    types = []
-if types:
-    for t in types:
-        print(f"- {t}")
-else:
-    print("- (none)")
-PY
+            printf "**Detected build types:**\n" >> pr_body.md
+            types=$(jq -r '.types[]?' tools/airysdark_ai_scan.json 2>/dev/null || true)
+            if [ -n "$types" ]; then
+              while IFS= read -r t; do
+                printf -- "- %s\n" "$t" >> pr_body.md
+              done <<< "$types"
+            else
+              printf -- "- (none)\n" >> pr_body.md
+            fi
           else
-            echo "_No detector JSON found (tools/airysdark_ai_scan.json)._" >> pr_body.md
+            printf "_No detector JSON found (tools/airysdark_ai_scan.json)._ \n" >> pr_body.md
           fi
-          echo "" >> pr_body.md
-          echo "**Next steps:**" >> pr_body.md
-          echo "1. Edit .github/workflows/AirysDark-AI_prob.yml and set env.TARGET to the build you want (e.g. android, linux, cmake)." >> pr_body.md
-          echo "2. Merge this PR." >> pr_body.md
-          echo "3. Manually run the workflow 'AirysDark-AI - Probe (LLM builds workflow)' from the Actions tab." >> pr_body.md
+          printf "\n**Next steps:**\n" >> pr_body.md
+          printf "1. Edit .github/workflows/AirysDark-AI_prob.yml and set env.TARGET (e.g. android, linux, cmake).\n" >> pr_body.md
+          printf "2. Merge this PR.\n" >> pr_body.md
+          printf "3. Manually run the workflow 'AirysDark-AI - Probe (LLM builds workflow)'.\n" >> pr_body.md
 
       - name: Stage detector outputs
         id: diff
